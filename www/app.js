@@ -690,6 +690,36 @@
   setInterval(() => { if (document.visibilityState === 'visible') sync(false); }, 180000);
   window.addEventListener('online', () => sync(false));
 
+
+  // ---------- Keyboard: keep the focused field above the on-screen keyboard ----------
+  (function keyboardFix() {
+    const root = document.documentElement;
+    let base = window.innerHeight;
+    let kbH = 0;
+    function apply(h) {
+      kbH = h > 80 ? h : 0;
+      const alreadyResized = Math.max(0, base - window.innerHeight);
+      const extra = Math.max(0, kbH - alreadyResized);
+      root.style.setProperty('--kb', extra + 'px');
+      document.body.classList.toggle('kb-open', kbH > 0);
+      if (kbH > 0) {
+        const el = document.activeElement;
+        if (el && el.closest && !el.closest('.composer') && el.scrollIntoView) setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+        if (el && el.closest && el.closest('.composer')) setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 60);
+      }
+    }
+    window.addEventListener('resize', () => { if (!kbH) base = Math.max(base, window.innerHeight); });
+    const K = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard;
+    if (K && K.addListener) {
+      K.addListener('keyboardWillShow', (i) => apply(i.keyboardHeight || 0));
+      K.addListener('keyboardDidShow', (i) => apply(i.keyboardHeight || 0));
+      K.addListener('keyboardWillHide', () => apply(0));
+      K.addListener('keyboardDidHide', () => apply(0));
+    } else if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => apply(window.innerHeight - window.visualViewport.height));
+    }
+  })();
+
   try { history.replaceState({ base: 1 }, ''); history.pushState({ base: 1 }, ''); } catch (e) {}
   render();
   sync(false);

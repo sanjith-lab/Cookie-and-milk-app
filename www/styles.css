@@ -127,7 +127,11 @@ input, select, textarea { font-size: 16px; }
 .bubble .who { font-size: 12px; font-weight: 700; color: #4A4955; }
 .bubble .what { font-size: 15px; font-weight: 800; }
 .bubble .share { font-size: 13px; font-weight: 600; }
-.composer { position: fixed; left: 50%; transform: translateX(-50%); width: min(520px, 100%); padding: 0 18px; bottom: calc(94px + var(--safe-bottom)); display: flex; gap: 8px; z-index: 15; }
+.composer { position: fixed; left: 50%; transform: translateX(-50%); width: min(520px, 100%); padding: 0 18px; bottom: calc(94px + var(--safe-bottom)); display: flex; gap: 8px; z-index: 15; transition: bottom .15s ease-out; }
+body.kb-open .composer { bottom: calc(10px + var(--kb, 0px)); }
+body.kb-open .nav { display: none; }
+body.kb-open .overlay, body.kb-open .sheet { padding-bottom: calc(24px + var(--kb, 0px)); }
+body.kb-open .feed { padding-bottom: 20px; }
 .composer .field { flex: 1; height: 56px; border-radius: 28px; background: #fff; display: flex; align-items: center; padding: 0 20px; box-shadow: 0 6px 20px rgba(23,23,26,.08); }
 .composer input { border: none; outline: none; background: transparent; width: 100%; font-size: 15px; font-weight: 600; }
 .composer .send { width: 56px; height: 56px; border-radius: 28px; border: none; background: var(--black); color: #fff; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
