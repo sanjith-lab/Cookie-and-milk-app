@@ -1,6 +1,6 @@
 {
   "appId": "com.sanjith.paisa",
-  "appName": "Cookie and Milk",
+  "appName": "Cookie & Milk",
   "webDir": "www",
   "android": {
     "adjustMarginsForEdgeToEdge": "force",

@@ -68,6 +68,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: Cookie and Milk 1.0.${{ github.run_number }}
+          name: Cookie & Milk 1.0.${{ github.run_number }}
           files: Cookie-and-Milk-1.0.${{ github.run_number }}.apk
           body: Download the .apk below on your Android phone and open it to install.

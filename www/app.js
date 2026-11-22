@@ -1,4 +1,4 @@
-/* Cookie and Milk: personal + shared expense tracker. Plain JS, no build step. */
+/* Cookie & Milk: personal + shared expense tracker. Plain JS, no build step. */
 (function () {
   const L = window.Logic;
   const $app = document.getElementById('app');
@@ -133,7 +133,7 @@
   function renderOnboard() {
     return '<div class="screen" style="padding-bottom:40px">' +
       '<div style="height:20px"></div><span class="pill lime sm" style="align-self:flex-start">Hi there</span>' +
-      '<h1>Welcome to Cookie and Milk</h1><p class="help" style="font-size:14px">Track your own spending and split costs with the people you live or hang out with.</p>' +
+      '<h1>Welcome to Cookie &amp; Milk</h1><p class="help" style="font-size:14px">Track your own spending and split costs with the people you live or hang out with.</p>' +
       '<div class="form-card">' +
       '<label class="field-label" for="ob-me">Your name</label><input id="ob-me" class="text-input" placeholder="e.g. Sanjith" autocomplete="off">' +
       '<label class="field-label" for="ob-budget">Monthly budget (₹)</label><input id="ob-budget" class="text-input" inputmode="numeric" placeholder="e.g. 35000">' +
@@ -325,7 +325,7 @@
       '<div class="row"><button class="pill black" data-act="backup">Copy backup</button><button class="pill soft" data-act="restore-open">Restore</button></div>' +
       (state.restoreOpen ? '<textarea id="restore-text" class="text-input" placeholder="Paste backup here" aria-label="Backup text"></textarea><button class="pill lime" data-act="restore" style="align-self:flex-start">Restore now</button>' : '') +
       '</div>';
-    h += '<p class="help" style="text-align:center">Cookie and Milk v1.0</p></div>';
+    h += '<p class="help" style="text-align:center">Cookie &amp; Milk v1.0</p></div>';
     return h;
   }
 
@@ -627,7 +627,7 @@
           const d = JSON.parse(document.getElementById('restore-text').value);
           if (d.app !== 'paisa' || !Array.isArray(d.records)) throw new Error();
           state.settings = d.settings; state.records = d.records; saveSettings(); saveRecords(); state.restoreOpen = false; render(); toast('Restored');
-        } catch (err) { toast('That does not look like a Cookie and Milk backup'); }
+        } catch (err) { toast('That does not look like a Cookie & Milk backup'); }
         break;
       }
     }

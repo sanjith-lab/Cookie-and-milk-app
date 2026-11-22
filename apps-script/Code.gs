@@ -1,8 +1,8 @@
 /**
- * Cookie and Milk sync script for Google Sheets.
+ * Cookie & Milk sync script for Google Sheets.
  * 1. Change SECRET below to any password you like (same one goes in the app).
  * 2. Deploy > New deployment > Web app > Execute as: Me, Who has access: Anyone.
- * 3. Paste the web app URL and the secret into Cookie and Milk > Settings on every phone.
+ * 3. Paste the web app URL and the secret into Cookie & Milk > Settings on every phone.
  */
 const SECRET = 'change-this-secret';
 const SHEET_NAME = 'Records';
