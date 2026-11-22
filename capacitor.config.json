@@ -1,0 +1,9 @@
+{
+  "appId": "com.sanjith.paisa",
+  "appName": "Paisa",
+  "webDir": "www",
+  "android": {
+    "adjustMarginsForEdgeToEdge": "force",
+    "backgroundColor": "#F5F4FA"
+  }
+}
