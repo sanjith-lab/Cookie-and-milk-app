@@ -1,0 +1,15 @@
+{
+  "name": "sms-capture",
+  "version": "1.0.0",
+  "description": "Cookie & Milk: catches bank and UPI debit SMS and asks to log them",
+  "main": "index.js",
+  "license": "MIT",
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=7.0.0"
+  }
+}

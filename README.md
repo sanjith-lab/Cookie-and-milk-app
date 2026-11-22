@@ -1,39 +1,46 @@
-# Cookie & Milk
+# Cookie & Milk 🍪
 
-An Android app for tracking your own spending and splitting costs with the people you live or hang out with.
+Cookie & Milk is an Android money app where you just chat. You tell Cookie what you spent, and it tracks your spending, splits costs with friends, plans your bills and grows your savings.
 
-- **Home:** a grid of tiles showing your budget ring, who owes whom, your next bill, your top categories, this week's spending and recent expenses.
-- **Shared:** a chat-style feed for each person you split with. Your payments appear on the right and theirs on the left. Type `450 groceries` to add a half split instantly, and tap **Settle** to clear the balance (it can open your UPI app).
-- **Add:** pick a category, enter the amount, then choose who paid and how to split it (half, custom, or all on one person).
-- **Sync:** shared expenses sync through a Google Sheet that everyone uses. Personal expenses stay on your phone.
+## What's inside (v2)
+- **Chat with Cookie:** type messages like these:
+  - `tea 40`
+  - `arjun me pizza 900`
+  - `riya paid groceries 1200`
+  - `ram 200 me 100 auto`
+  - `dinner 2400 my treat`
+- **Commands in the chat:**
+  - Bills: `rent paid`, `rent 18000 every 5th`, `rent is 19500 from jan`
+  - Income, savings and budgets: `salary 85000`, `save 5000 emergency`, `goal iphone 80000 by june`, `budget food 8000`
+  - Lending and claims: `lent kowshik 2000 by 27th`, `kowshik gave 500`, `office cab 400 claim`, `amazon refund 500`
+  - Trips: `start goa trip budget 15000`, then `end trip`
+  - Teaching and fixing: `zudio is shopping`, `undo`
+- **Ask questions:** `who owes me?`, `top spends this month?`, `how much on swiggy?`, `can i spend 2000 today?` and `what if i stop swiggy`. For advice questions, Cookie packs your numbers into a prompt you can share to any AI app.
+- **Payment detection:** when your bank texts about a UPI or card payment, Cookie sends you a notification. It makes smart guesses, for example: a ₹15,000 payment is probably your rent, ₹20 is probably tea, and Zomato goes to Food & Drink. It also learns from your answers.
+- **Overview:** safe to spend today, due soon (bills, friends, loans, claims), trip card, "You & partner" stats, budgets, savings pots, weekly chart and recent history.
+- **Insights:** day, week and month charts, category ring (rent and bills shown separately), spending calendar, needs vs wants, repeat spends, and income vs spending.
+- **Savings:** emergency fund (target worked out from your essentials), goals with monthly amounts, sinking funds, investments, savings rate and payday split.
+- **Reminders:** morning hello, nightly nudge, bill due tomorrow, loan due today, and month-end close.
 
-## Install the app
+## Install
+1. On your Android phone, open the **Releases** page of this repo and download the latest `.apk`.
+2. Open it and allow **Install unknown apps** if Android asks.
+3. Updates install over the old version and keep your data.
 
-1. Open the **Releases** page of this repo on your Android phone (or the **Actions** tab, then the latest run, then **Cookie-and-Milk-APK**).
-2. Download the `.apk` file and open it.
-3. If Android asks, allow your browser or file manager to **install unknown apps**.
-4. When a newer version comes out, install it over the old one. Your data stays.
+**Payment detection** needs SMS permission. If Android says the setting is *restricted*:
+1. Open **Settings › Apps › Cookie & Milk**.
+2. Tap **⋮** (top right) and choose **Allow restricted settings**.
+3. Turn payment detection on again from Cookie's settings (tap the cookie at the top of the app).
 
-Every push to `main` builds a new APK automatically.
+## Shared sync with Google Sheets (optional)
+1. Create a Google Sheet, then open **Extensions › Apps Script**.
+2. Paste in everything from [`apps-script/Code.gs`](apps-script/Code.gs) and change `SECRET` to a password of your own.
+3. Choose **Deploy › New deployment › Web app**, with Execute as **Me** and Who has access set to **Anyone**.
+4. In the app, tap the cookie, go to **Shared sync**, and paste the URL and password. Everyone sharing expenses uses the same ones.
 
-## Set up Google Sheets sync (do this once)
-
-1. Create a new Google Sheet, for example "Cookie & Milk shared".
-2. In the sheet, go to **Extensions > Apps Script**.
-3. Delete what's there and paste in everything from [`apps-script/Code.gs`](apps-script/Code.gs).
-4. On line 7, change `change-this-secret` to a password of your own.
-5. Click **Deploy > New deployment**. Under the gear icon choose **Web app**, then set:
-   - Execute as: **Me**
-   - Who has access: **Anyone**
-6. Click **Deploy** and approve the permissions. Google warns that the app isn't verified; click **Advanced > Go to project**. This is your own script.
-7. Copy the **Web app URL**, which ends in `/exec`.
-8. In Cookie & Milk on each phone, go to **Settings > Sync with Google Sheets** and paste the URL and your password.
-
-Everyone who shares expenses uses the **same** URL and password. Each person sets their own name in the app, and names must be spelled the same on every phone. (Upper or lower case doesn't matter.)
-
-If you edit the script later, use **Deploy > Manage deployments > Edit > New version** so that the URL stays the same.
+Only shared expenses, settlements and loans sync. Personal expenses stay on your phone.
 
 ## Notes
-
-- `signing/debug.keystore` keeps the app's signature the same on every build, so updates install over the old version. Keep this repo private.
-- To back up personal expenses, use **Settings > Backup > Copy backup**.
+- `signing/debug.keystore` keeps the app signature the same across builds, so updates install cleanly.
+- `native/sms-capture` is the small Android plugin that reads bank SMS (debit messages only) on the phone.
+- `npm test` runs the logic and chat-engine tests. The cloud build runs them too.
