@@ -2,7 +2,7 @@
   "name": "paisa-app",
   "version": "1.0.0",
   "private": true,
-  "description": "Paisa: personal and shared expense tracker for Android",
+  "description": "Cookie and Milk: personal and shared expense tracker for Android",
   "scripts": {
     "test": "node tests/logic.test.js"
   },
