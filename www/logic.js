@@ -145,6 +145,64 @@
     return m ? Math.min(Math.max(Number(m[1]), 1), 31) : null;
   }
 
+
+  const COMMAND_START = /^(open|go to|goto|take me|turn|enable|disable|hide|unhide|rename|set|change|update|make|edit|delete|remove|clear|reset|divide|multiply|subtract|calculate|calc|compute|show|list|find|rename|increase|decrease|reduce|raise|lower|turn|enable|disable|switch|cancel|stop|start|keep|limit|cap|put|move|mark|undo|please|can you|could you|i want|i need|let me|tell me)\b/;
+  const SETTING_WORDS = new Set(['safe', 'spend', 'spending', 'limit', 'budget', 'salary', 'income', 'setting', 'settings', 'daily', 'monthly', 'weekly', 'per', 'divide', 'divided', 'multiply', 'times', 'calculate', 'delete', 'remove', 'entries', 'entry', 'reminder', 'remind', 'goal', 'target', 'cap']);
+
+  // Safe maths for "divide 4000 by 30" style messages
+  function parseMath(t) {
+    let e = t.replace(/^(?:what(?:'s| is)|calculate|calc|compute|solve|how much is|whats)\s+/, '').replace(/\?$/, '').trim();
+    let m = e.match(/^(\d+(?:\.\d+)?)\s*%\s*of\s*(\d+(?:\.\d+)?)$/);
+    if (m) return mathOut(t, m[1] + '% of ' + m[2], Number(m[1]) / 100 * Number(m[2]));
+    m = e.match(/^(divide|multiply|add|subtract)\s+(\d+(?:\.\d+)?)\s+(?:by|with|to|from|and)\s+(\d+(?:\.\d+)?)$/);
+    if (m) {
+      const x = Number(m[2]), y = Number(m[3]);
+      const op = m[1];
+      if (op === 'divide') return y ? mathOut(t, x + ' ÷ ' + y, x / y, { per: y, total: x }) : null;
+      if (op === 'multiply') return mathOut(t, x + ' × ' + y, x * y);
+      if (op === 'add') return mathOut(t, x + ' + ' + y, x + y);
+      return mathOut(t, x + ' − ' + y, x - y);
+    }
+    m = e.match(/^(\d+(?:\.\d+)?)\s*(?:divided by|by)\s*(\d+(?:\.\d+)?)$/);
+    if (m && /divided/.test(e)) return Number(m[2]) ? mathOut(t, m[1] + ' ÷ ' + m[2], Number(m[1]) / Number(m[2]), { per: Number(m[2]), total: Number(m[1]) }) : null;
+    m = e.match(/^(\d+(?:\.\d+)?)\s*(?:times|multiplied by)\s*(\d+(?:\.\d+)?)$/);
+    if (m) return mathOut(t, m[1] + ' × ' + m[2], Number(m[1]) * Number(m[2]));
+    const expr = e.replace(/×|x(?=\s*\d)/g, '*').replace(/÷/g, '/').replace(/\s+/g, '');
+    if (/^[\d.+\-*/()]+$/.test(expr) && /\d[+\-*/]\(?\d/.test(expr)) {
+      try {
+        const v = evalExpr(expr);
+        if (isFinite(v)) { const dm = expr.match(/^(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/); return mathOut(t, e.replace(/\*/g, ' × ').replace(/\//g, ' ÷ '), v, dm ? { per: Number(dm[2]), total: Number(dm[1]) } : null); }
+      } catch (err) { return null; }
+    }
+    return null;
+  }
+  function mathOut(t, label, value, extra) { return Object.assign({ type: 'math', label, value: Math.round(value * 100) / 100 }, extra || {}); }
+  // Tiny recursive-descent evaluator (+ - * / and brackets), no eval()
+  function evalExpr(s) {
+    let i = 0;
+    const num = () => { let j = i; while (i < s.length && /[\d.]/.test(s[i])) i++; if (j === i) throw new Error('num'); return Number(s.slice(j, i)); };
+    const factor = () => { if (s[i] === '(') { i++; const v = expr(); i++; return v; } if (s[i] === '-') { i++; return -factor(); } return num(); };
+    const term = () => { let v = factor(); while (s[i] === '*' || s[i] === '/') { const op = s[i++]; const r = factor(); v = op === '*' ? v * r : v / r; } return v; };
+    const expr = () => { let v = term(); while (s[i] === '+' || s[i] === '-') { const op = s[i++]; const r = term(); v = op === '+' ? v + r : v - r; } return v; };
+    const v = expr(); if (i !== s.length) throw new Error('rest'); return v;
+  }
+
+  // Safe-to-spend settings in plain words
+  function parseSafe(t) {
+    const safeWords = /\bsafe\s*(?:to\s*)?spend(?:ing)?\b|\b(?:daily|spend(?:ing)?|day)\s+(?:limit|budget|cap|allowance)\b|\ballowance\b/;
+    const keepWords = /^(?:i\s+(?:want|need|wanna)\s+to\s+|let me\s+|help me\s+)?(?:only\s+)?(?:spend|keep (?:my )?spending|limit (?:my )?spending)\s+(?:only\s+|under\s+|below\s+|at most\s+|max\s+)?(\d+)/;
+    const isSafe = safeWords.test(t);
+    const km = t.match(keepWords);
+    if (!isSafe && !km && !/\bbudget\s+\d+\s*(?:per|a|an|\/|every|each)\s*(?:day|week)\b|\bbudget\s+(?:per|a)\s+day\b/.test(t)) return null;
+    if (isSafe && /\b(without|excluding|exclude|ignore)\s+savings\b/.test(t)) return { type: 'safe-mode', mode: 'no-savings' };
+    if (isSafe && /\b(with|including|include)\s+savings\b/.test(t)) return { type: 'safe-mode', mode: 'with-savings' };
+    if (isSafe && /\b(reset|remove|clear|turn off|delete|cancel|no limit|disable|default|auto|automatic)\b/.test(t)) return { type: 'safe-reset' };
+    const a = (t.match(/\b(\d+(?:\.\d+)?)\b/) || [])[1];
+    if (!a) return isSafe ? { type: 'question', text: 'safe to spend' } : null;
+    const period = /\b(month|monthly|months|mo)\b/.test(t) ? 'month' : /\b(week|weekly|weeks|wk)\b/.test(t) ? 'week' : 'day';
+    return { type: 'safe-set', amount: Number(a), period };
+  }
+
   // ---------------- The message parser ----------------
   // ctx = { me, people:[{name}], shortcuts:{flat:[names]}, bills:[{id,name,amount}], goals:[{name}], sinking:[{name}], learned:{}, autoSplit:{cat:[names]}, today: Date }
   function parse(raw, ctx) {
@@ -154,13 +212,89 @@
     const people = ctx.people || [];
     const bills = ctx.bills || [];
     if (!t) return { type: 'empty' };
+    let m;
+    const amountIn = (s) => { const x = s.replace(/\b(\d{1,2})(st|nd|rd|th)\b/g, '').match(/\b(\d+(?:\.\d+)?)\b/); return x ? Number(x[1]) : null; };
 
     if (/^(help|what can you do|commands|how to use)\??$/.test(t)) return { type: 'help' };
     if (/^undo$/.test(t)) return { type: 'undo' };
     if (/^(hi|hello|hey|hii+|yo|good (morning|evening|night|afternoon))\b/.test(t) && !/\d/.test(t)) return { type: 'greet' };
 
+
+
+    // ---------- Navigation & toggles ----------
+    m = t.match(/^(?:please\s+)?(?:open|go to|goto|show|show me|take me to|view|see)?\s*(?:the\s+|my\s+)?(settings?|account|profile|overview|charts?|graphs?|insights|reports?|history|payment history|transactions|savings|savings page)(?:\s+page|\s+screen|\s+tab)?$/);
+    if (m) { const v = m[1]; return { type: 'open', view: /setting|account|profile/.test(v) ? 'settings' : /overview/.test(v) ? 'overview' : /chart|graph|insight|report/.test(v) ? 'charts' : /saving/.test(v) ? 'savings' : 'history' }; }
+    if (/^(?:turn on|enable|start|switch on|activate)\s+(?:payment detection|payment tracking|upi tracking|sms(?: reading| tracking)?|auto(?:matic)? tracking|detection)$/.test(t)) return { type: 'enable-sms' };
+    m = t.match(/^(turn on|enable|switch on|turn off|disable|switch off|stop|mute|unmute)\s+(?:all\s+)?(reminders?|notifications?|nudges?)$/);
+    if (m) return { type: 'reminders-toggle', on: /^(turn on|enable|switch on|unmute)/.test(m[1]) };
+    if (/^(hide|blur)\s+(?:my\s+)?(amounts?|numbers|money)$/.test(t)) return { type: 'hide-amounts', on: true };
+    if (/^(show|unhide|unblur)\s+(?:my\s+)?(amounts?|numbers|money)$/.test(t)) return { type: 'hide-amounts', on: false };
+
+    // ---------- Rename a category: "change name of health to health and lifestyle" ----------
+    m = t.match(/^(?:change|rename|update)\s+(?:the\s+)?(?:name\s+of\s+)?(?:the\s+)?(?:category\s+)?(.+?)(?:\s+category)?(?:'s\s+name)?\s+(?:to|as|into)\s+(.+)$/);
+    if (m && resolveCat(m[1], ctx) && !resolveCat(m[2], ctx)) return { type: 'cat-rename', from: resolveCat(m[1], ctx), to: titleCase(m[2].replace(/\s+category$/, '')) };
+
+    // ---------- Maths: "divide 4000 by 30", "4000/30", "18% of 2500", "what is 1200+340" ----------
+    const mathRes = parseMath(t);
+    if (mathRes) return mathRes;
+
+    // ---------- Safe to spend: "set safe spend to 150", "safe spend 4000 per month", "daily limit 200" ----------
+    const safeRes = parseSafe(t);
+    if (safeRes) return safeRes;
+
+    // ---------- Clear chat ----------
+    if (/^(clear|clean|reset|empty)\s+(the\s+)?(chat|messages|screen)$/.test(t)) return { type: 'chat-clear' };
+    if (/\b(chat|chats|messages|chat history)\b/.test(t) && /\b(keep|save|store|delete|clear|remove|history|forever|never|refresh|fresh)\b/.test(t) && !/^(clear|clean|reset|empty)\s+(the\s+)?(chat|messages|screen)$/.test(t)) {
+      if (/(forever|never (delete|clear|remove)|do ?n.?t (delete|clear|remove)|dont (delete|clear|remove)|keep (all|everything)|always keep)/.test(t)) return { type: 'chat-keep', days: -1 };
+      const dm = t.match(/(\d+)\s*(day|days|week|weeks|month|months)\b/);
+      if (dm) { const n = +dm[1] * (/week/.test(dm[2]) ? 7 : /month/.test(dm[2]) ? 30 : 1); return { type: 'chat-keep', days: n }; }
+      if (/\b(a|one) (week)\b/.test(t)) return { type: 'chat-keep', days: 7 };
+      if (/\b(a|one) (month)\b/.test(t)) return { type: 'chat-keep', days: 30 };
+      if (/(every ?day|daily|each day|fresh|one day|1 day|only today)/.test(t)) return { type: 'chat-keep', days: 0 };
+    }
+
+    // ---------- Delete entries ----------
+    m = t.match(/^(?:please\s+)?(?:delete|remove|erase|clear|cancel|undo)\s+(.*)$/);
+    if (m && !/\b(category|bill|subscription|goal|budget|reminder|shortcut)\b/.test(m[1])) {
+      const rest = m[1].replace(/'s\b/g, ' ').replace(/'/g, '').replace(/\b(entries|entry|expenses|expense|records|record|logs|log|transactions|transaction|spends|spend|items|item|of|the|my|all|from|for|please|s)\b/g, ' ').replace(/'s\b/g, ' ').replace(/\s+/g, ' ').trim();
+      const all = /\ball\b|\bevery/.test(m[1]);
+      const pr = people.find((x) => rest.split(' ').includes(norm(x.name)));
+      if (/^(last|previous|that|it|this|recent|latest|the last one|last one)$/.test(rest) || rest === '') return { type: 'delete', scope: 'last' };
+      if (pr && rest === norm(pr.name)) return { type: 'delete-person-ask', person: pr.name };
+      const day = /\btoday\b|\btodays\b/.test(rest) ? 0 : /\byesterday\b/.test(rest) ? -1 : null;
+      const kw = rest.replace(/\btoday\b|\btodays\b|\byesterday\b|\bthis week\b/g, ' ').trim();
+      const week = /\bthis week\b/.test(rest);
+      return { type: 'delete', scope: day !== null || week ? (week ? 'week' : 'day') : 'keyword', day, kw: kw || null, all: all || (day !== null && !kw) || week };
+    }
+
+    // ---------- Edit the last entry: "change last to 50", "make it 450", "that was shopping", "actually yesterday" ----------
+    m = t.match(/^(?:change|make|update|edit|correct|fix|set)\s+(?:it|that|this|the\s+last(?:\s+one)?|last(?:\s+one|\s+entry|\s+expense)?)\s*(?:to|as|into|=)?\s*(.+)$/) ||
+        t.match(/^(?:actually|no|nope|sorry|oops|wait)[,!.]?\s+(?:it\s+was|it'?s|that\s+was|make\s+it|change\s+it\s+to|it\s+is)?\s*(.+)$/) ||
+        t.match(/^(?:it|that)\s+(?:was|is|should be)\s+(.+)$/);
+    if (m) {
+      const v = m[1].trim();
+      const ch = {};
+      const num = v.match(/^(?:rs\s*)?(\d+(?:\.\d+)?)$/) || v.match(/^(?:rs\s*)?(\d+(?:\.\d+)?)\s+(?:rupees|rs)?$/);
+      if (num) ch.amount = Number(num[1]);
+      const c = resolveCat(v.replace(/^(?:a|an|in|under|category)\s+/, ''), ctx);
+      if (c) ch.cat = c;
+      if (/^yesterday$/.test(v)) { const d = new Date(today); d.setDate(d.getDate() - 1); ch.date = isoDate(d); }
+      if (/^today$/.test(v)) ch.date = isoDate(today);
+      const pr = people.find((x) => norm(x.name) === v.replace(/^(?:split\s+)?(?:with\s+)?/, ''));
+      if (pr) ch.splitWith = pr.name;
+      if (/^(?:just me|only me|mine|personal)$/.test(v)) ch.justMe = true;
+      const ren = m[0].match(/^(?:rename|change)\s+(?:it|that|last(?:\s+one)?)\s+to\s+([a-z].+)$/);
+      if (!Object.keys(ch).length && /^[a-z][a-z '&]{1,30}$/.test(v)) ch.note = titleCase(v);
+      if (Object.keys(ch).length) return { type: 'edit-last', change: ch };
+    }
+    m = t.match(/^rename\s+(?:it|that|last(?:\s+one)?|the\s+last(?:\s+one)?)\s+(?:to|as)\s+(.+)$/);
+    if (m) return { type: 'edit-last', change: { note: titleCase(m[1]) } };
+
+    // ---------- List entries: "show today's entries", "list swiggy this month" ----------
+    if (/^(show|list|view|display|see|find|search)\b/.test(t) && !/\b(chart|charts|graph|overview|savings|settings|help)\b/.test(t)) return { type: 'list', text: t };
+
     // Trips
-    let m = t.match(/^start\s+(?:a\s+)?(.+?)\s+trip(?:\s+(?:with\s+)?budget\s+(\d+))?$/) || t.match(/^start trip\s+(.+?)(?:\s+budget\s+(\d+))?$/);
+    m = t.match(/^start\s+(?:a\s+)?(.+?)\s+trip(?:\s+(?:with\s+)?budget\s+(\d+))?$/) || t.match(/^start trip\s+(.+?)(?:\s+budget\s+(\d+))?$/);
     if (m) return { type: 'trip-start', name: titleCase(m[1]), budget: m[2] ? Number(m[2]) : 0 };
     if (/^(end|stop|finish|close)\s+(the\s+)?trip$/.test(t)) return { type: 'trip-end' };
 
@@ -193,12 +327,6 @@
     // Budget
     m = t.match(/^(?:set\s+)?budget\s+(?:for\s+)?(.*?)\s*(?:to\s+|is\s+|=\s*)?(\d+)$/);
     if (m) return { type: 'budget', cat: m[1] ? resolveCat(m[1]) : null, catText: m[1], amount: Number(m[2]) };
-
-    // Safe spend cap / mode
-    m = t.match(/safe\s*(?:to\s*)?spend\s+(?:under|below|at|max|cap|to)\s+(\d+)/) || t.match(/^(?:keep|cap|limit)\s+safe\s*(?:to\s*)?spend\s+(?:under|below|at|to)?\s*(\d+)/);
-    if (m) return { type: 'safe-cap', amount: Number(m[1]) };
-    if (/safe\s*(?:to\s*)?spend\s+(?:without|excluding)\s+savings/.test(t)) return { type: 'safe-mode', mode: 'no-savings' };
-    if (/safe\s*(?:to\s*)?spend\s+(?:with|including)\s+savings/.test(t)) return { type: 'safe-mode', mode: 'with-savings' };
 
     // Reminders
     m = t.match(/^remind me (?:at|by)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s+(morning|night|evening))?$/);
@@ -302,7 +430,6 @@
     }
 
     // Lending: "lent kowshik 2000", "gave 2000 to kowshik return by 27th", "i gave 2000 to kowshik and he needs to return it by 27th"
-    const amountIn = (s) => { const x = s.replace(/\b(\d{1,2})(st|nd|rd|th)\b/g, '').match(/\b(\d+(?:\.\d+)?)\b/); return x ? Number(x[1]) : null; };
     const nameAfter = (re) => { const x = t.match(re); return x ? x[1] : null; };
     const STOP_NAMES = new Set(['him', 'her', 'them', 'it', 'back', 'return', 'the', 'a', 'my', 'and', 'he', 'she', 'by', 'for']);
     const returnWords = /\b(return|returns|returned|back|by|before|till|until|owe|owes|repay|pay me back|due)\b/;
@@ -343,8 +470,13 @@
       return { type: 'refund', amount: a, note: titleCase(words.join(' ')), cat: guessCategory(words, ctx.learned).cat };
     }
 
+    // Never log a command as a spend
+    if (COMMAND_START.test(t)) return { type: 'unclear', text: t, amount: amountIn(t) };
+
     // ---------------- Expense ----------------
     const ex = parseExpense(text, ctx, today);
+    // Words that sound like a setting, not a purchase
+    if (ex.keyWords.some((w) => SETTING_WORDS.has(w))) return { type: 'unclear', text: t, amount: ex.amount, expense: ex };
     if (ex.participants.length === 1 && !ex.claim && ex.keyWords.length && ex.keyWords.length <= 3) {
       const b = billMatch(ex.keyWords.join(' ')) || billMatch(ex.keyWords[0]);
       if (b) return { type: 'bill-paid', bill: b.id, amount: ex.amount, method: ex.method };
@@ -356,9 +488,11 @@
     const k = norm(s).replace(/\s+category$/, '');
     if (!k) return null;
     const custom = (ctx && ctx.customCats) || [];
-    const c = CATS.find((x) => norm(x.name) === k) || custom.find((x) => norm(x) === k);
-    if (c) return typeof c === 'string' ? c : c.name;
-    return CAT_ALIASES[k] || null;
+    const ren = (ctx && ctx.renamed) || {};
+    const c = custom.find((x) => norm(x) === k) || CATS.find((x) => norm(x.name) === k);
+    if (c) { const n = typeof c === 'string' ? c : c.name; return ren[n] || n; }
+    const al = CAT_ALIASES[k];
+    return al ? ren[al] || al : null;
   }
 
   function parseExpense(text, ctx, today) {
@@ -407,6 +541,7 @@
     const cleanNote = noteWords.filter((w) => !FILLER.has(w) && !/^(he|she|they|him|her|we|us)$/.test(w));
     const g = guessCategory(cleanNote, ctx.learned);
     let cat = flags.claim && g.cat === 'Other' ? 'Transport' : g.cat;
+    if (ctx.renamed && ctx.renamed[cat]) cat = ctx.renamed[cat];
     const note = titleCase(cleanNote.join(' ')) || cat;
     const me = ctx.me;
     payer = payer || me;
@@ -591,6 +726,25 @@
     const daysLeft = dim - today.getDate() + 1;
     const bills = billsThisMonth(data.bills, today);
     const billsTotal = bills.reduce((a, b) => a + b.amountNow, 0);
+    const everyday = (r) => !r.bill && !FIXED.has(r.category);
+    const rule = data.safeRule;
+    // The user's own rule: "safe spend 150 a day" / "4000 a month" / "1000 a week"
+    if (rule && rule.amount > 0) {
+      const spentToday = mySpend(records, me, (r) => r.date === todayISO && everyday(r)).total;
+      let from, left;
+      if (rule.period === 'day') {
+        const safe = rule.amount - spentToday;
+        return { safe: Math.max(0, Math.floor(safe)), over: safe < 0, perDay: rule.amount, pool: rule.amount, base: rule.amount, billsTotal, spentBefore: 0, spentToday, daysLeft: 1, rule, monthUsedPct: Math.min(1, spentToday / rule.amount) };
+      }
+      if (rule.period === 'week') { from = weekStart(today); left = 7 - ((today.getDay() + 6) % 7); }
+      else { from = new Date(today.getFullYear(), today.getMonth(), 1); left = daysLeft; }
+      const fromISO = isoDate(from);
+      const spentBefore = mySpend(records, me, (r) => r.date >= fromISO && r.date < todayISO && everyday(r)).total;
+      const pool = rule.amount - spentBefore;
+      const perDay = pool / left;
+      const safe = perDay - spentToday;
+      return { safe: Math.max(0, Math.floor(safe)), over: safe < 0, perDay: Math.floor(perDay), pool: Math.floor(pool), base: rule.amount, billsTotal, spentBefore, spentToday, daysLeft: left, rule, monthUsedPct: Math.min(1, (spentBefore + spentToday) / rule.amount) };
+    }
     const income = Number(data.income && data.income.amount) || 0;
     const savePlan = data.safeMode === 'no-savings' ? 0 : savingsPlanMonthly(data, today);
     let base = income ? income - billsTotal - savePlan : Number(data.budget) || 0;

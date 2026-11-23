@@ -17,7 +17,7 @@
       income: { amount: 0, payday: 1, history: [] }, bills: [], goals: [], sinking: [], emergency: { saved: 0 }, investments: [],
       learned: {}, payees: {}, customCats: [], autoSplit: {}, trip: null, trips: [], safeCap: 0, safeMode: 'with-savings',
       reminders: { morning: 9, night: 22, on: true }, recurAsked: {}, nudged: {}, alerted: {}, hideNames: true, hideAmounts: false,
-      plans: [], sync: { url: '', key: '', last: 0 }, sms: { enabled: false, lastScan: 0 }, captured: {}, chat: [], records: [], setup: 'name', pending: null,
+      plans: [], sync: { url: '', key: '', last: 0 }, sms: { enabled: false, lastScan: 0 }, captured: {}, chat: [], chatKeep: 7, records: [], setup: 'name', pending: null,
     };
   }
   function migrateV1(s, recs) {
@@ -39,10 +39,11 @@
   function ctx(D) {
     const ratios = { me: D.me };
     people(D).forEach((p) => { if (p.ratio) ratios[norm(p.name)] = p.ratio; });
-    return { me: D.me, people: people(D), shortcuts: D.shortcuts, bills: (D.bills || []).filter((b) => !b.stopped), learned: D.learned, autoSplit: D.autoSplit, customCats: D.customCats, ratios, today: clock() };
+    const renamed = {}; Object.entries(D.catMeta || {}).forEach(([to, m]) => { renamed[m.from] = to; });
+    return { renamed, me: D.me, people: people(D), shortcuts: D.shortcuts, bills: (D.bills || []).filter((b) => !b.stopped), learned: D.learned, autoSplit: D.autoSplit, customCats: D.customCats, ratios, today: clock() };
   }
   const live = (D) => D.records.filter((r) => !r.deleted);
-  const allCats = (D) => L.CATS.map((c) => c.name).concat((D.customCats || []).filter((c) => !L.CATS.some((x) => x.name === c)));
+  const allCats = (D) => L.CATS.map((c) => c.name).filter((c) => !(D.hiddenCats || []).includes(c)).concat((D.customCats || []).filter((c) => !L.CATS.some((x) => x.name === c)));
 
   // ---------------- Messages ----------------
   function say(D, text, card) { const m = { id: uid(), ts: clock().getTime(), day: todayISO(), from: 'cookie', text: text || '', card: card || null }; D.chat.push(m); return m; }
@@ -129,6 +130,11 @@
         const re = L.parse(text.replace(/[₹,]/g, '') + ' ' + p.raw, ctx(D));
         return exec(D, re.type === 'expense' ? re : Object.assign({}, intent, { amount }), p.raw);
       }
+      if (p.type === 'note' && !/\d/.test(text) && text.split(/\s+/).length <= 4) {
+        D.pending = null;
+        const re = L.parse(text + ' ' + p.intent.amount, ctx(D));
+        if (re.type === 'expense') return exec(D, re, text);
+      }
       D.pending = null;
     }
     const intent = L.parse(text, ctx(D));
@@ -156,6 +162,22 @@
       case 'investment': snapshot(D, 'investment'); D.investments.push({ id: uid(), name: it.name, amount: it.amount, day: it.day || clock().getDate(), total: 0 });
         return say(D, '📈 ' + it.name + ' of ' + fmt(it.amount) + ' a month added. I\'ll count it as savings each month.');
       case 'budget': return it.cat || !it.catText ? propose(D, (it.cat ? it.cat + ' budget' : 'Monthly budget') + ' → ' + fmt(it.amount) + '?', { kind: 'budget', cat: it.cat, amount: it.amount }) : say(D, 'I don\'t know the category "' + esc(it.catText) + '". Try something like <b>budget food 8000</b>.');
+      case 'math': return mathReply(D, it);
+      case 'safe-set': return safeSet(D, it);
+      case 'safe-reset': snapshot(D, 'safe spend reset'); D.safeRule = null; D.safeCap = 0;
+        return say(D, '✓ Safe to spend is back to automatic: worked out from your ' + (D.income.amount ? 'salary, bills and savings plans' : 'budget') + '.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+      case 'chat-keep': return chatKeep(D, it.days);
+      case 'chat-clear': D.chatClearedAt = clock().getTime(); return say(D, '🧹 Fresh chat! Everything you logged is still saved.');
+      case 'delete': return deleteEntries(D, it);
+      case 'delete-person-ask': return ask(D, 'What should I delete?', [opt('Remove ' + it.person + ' from people', { do: 'remove-person', person: it.person }, 'black'), opt('Delete my last entry with ' + it.person, { do: 'intent', intent: { type: 'delete', scope: 'keyword', kw: norm(it.person), all: false } })]);
+      case 'edit-last': return editLast(D, it.change);
+      case 'list': return listEntries(D, it.text);
+      case 'open': say(D, '👉 Opening ' + (it.view === 'charts' ? 'your charts' : it.view) + '.'); return { effect: { type: 'open', view: it.view } };
+      case 'enable-sms': return { effect: { type: 'enable-sms' } };
+      case 'reminders-toggle': snapshot(D, 'reminders'); D.reminders.on = it.on; return say(D, it.on ? '🔔 Reminders are on.' : '🔕 Reminders are off. Type <b>turn on reminders</b> any time.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+      case 'hide-amounts': D.hideAmounts = it.on; return say(D, it.on ? '🙈 Amounts are hidden. Type <b>show amounts</b> to bring them back.' : '👀 Amounts are visible again.');
+      case 'cat-rename': return renameCat(D, it);
+      case 'unclear': return unclear(D, it);
       case 'safe-cap': return propose(D, 'Keep safe to spend at most ' + fmt(it.amount) + ' a day?', { kind: 'safe-cap', amount: it.amount });
       case 'safe-mode': snapshot(D, 'safe spend mode'); D.safeMode = it.mode; return say(D, it.mode === 'no-savings' ? 'OK, savings plans no longer reduce your safe-to-spend number.' : 'OK, I\'ll set your savings plans aside before working out safe to spend.');
       case 'reminder-time': snapshot(D, 'reminder time'); D.reminders[it.which === 'morning' ? 'morning' : 'night'] = it.hour + it.minute / 60;
@@ -227,6 +249,10 @@
 
   function expense(D, it, raw) {
     if (it.amount == null || !(it.amount > 0)) return askAmount(D, it, raw);
+    if (!(it.keyWords || []).length && it.participants.length <= 1 && it.cat === 'Other') {
+      D.pending = { type: 'note', intent: it };
+      return ask(D, 'What was ' + fmt(it.amount) + ' for? Type it (like <b>lunch</b>) or tap one:', ['Food & Drink', 'Groceries', 'Transport', 'Shopping', 'Bills & Utilities', 'Other'].map((c, i) => opt(c, { do: 'intent', intent: Object.assign({}, it, { cat: c, note: c, keyWords: [c] }) }, i === 0 ? 'black' : '')));
+    }
     const dup = live(D).find((r) => r.kind === 'expense' && r.amount === it.amount && norm(r.note) === norm(it.note) && clock().getTime() - r.createdAt < 120000 && Object.keys(r.shares || {}).sort().join() === Object.keys(it.shares || {}).sort().join());
     snapshot(D, (it.note || 'expense') + ' ' + fmt(it.amount));
     const r = addRecord(D, {
@@ -313,7 +339,8 @@
   }
 
   function propose(D, text, change) {
-    return ask(D, text, [opt('Confirm', { do: 'apply', change }, 'black'), opt('Cancel', { do: 'noop', text: 'No change made.' })], { change: true });
+    // Clear instructions are applied right away, with an Undo button
+    return say(D, applyChange(D, change), { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
   }
   function applyChange(D, c) {
     snapshot(D, 'setting change');
@@ -546,6 +573,148 @@
     ], note: 'Even cutting it in half saves ' + fmt(monthly * 6) + ' a year.' });
   }
 
+
+  // ---------------- Smarter replies ----------------
+  function renameCat(D, it) {
+    if (allCats(D).some((c) => same(c, it.to))) return say(D, 'There\'s already a category called ' + esc(it.to) + '.');
+    snapshot(D, 'rename category');
+    const from = it.from, to = it.to;
+    D.records.forEach((r) => { if (r.category === from) { r.category = to; touch(r); } });
+    D.bills.forEach((b) => { if (b.category === from) b.category = to; });
+    if (D.catBudgets[from] != null) { D.catBudgets[to] = D.catBudgets[from]; delete D.catBudgets[from]; }
+    if (D.autoSplit[from]) { D.autoSplit[to] = D.autoSplit[from]; delete D.autoSplit[from]; }
+    Object.keys(D.learned).forEach((w) => { if (D.learned[w] === from) D.learned[w] = to; });
+    D.catMeta = D.catMeta || {};
+    const base = (D.catMeta[from] && D.catMeta[from].from) || from;
+    D.catMeta[to] = { from: base };
+    delete D.catMeta[from];
+    D.customCats = (D.customCats || []).filter((c) => c !== from).concat([to]);
+    D.hiddenCats = (D.hiddenCats || []).concat(L.CATS.some((c) => c.name === from) ? [from] : []);
+    return say(D, '🏷️ Renamed <b>' + esc(from) + '</b> to <b>' + esc(to) + '</b>. All past entries moved too.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+  }
+
+  function mathReply(D, it) {
+    const v = it.value;
+    const pretty = Math.abs(v) >= 1000 || Number.isInteger(v) ? v.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : String(v);
+    const opts = [];
+    if (it.per && [28, 29, 30, 31].includes(it.per)) opts.push(opt('Use ' + fmt(Math.floor(v)) + ' a day as safe spend', { do: 'intent', intent: { type: 'safe-set', amount: it.total, period: 'month' } }, 'black'));
+    if (it.per === 7) opts.push(opt('Use as weekly safe spend', { do: 'intent', intent: { type: 'safe-set', amount: it.total, period: 'week' } }, 'black'));
+    return say(D, '🧮 ' + esc(it.label) + ' = <b>' + pretty + '</b>', opts.length ? { type: 'ask', options: opts } : null);
+  }
+
+  function safeSet(D, it) {
+    snapshot(D, 'safe spend');
+    D.safeRule = { amount: it.amount, period: it.period };
+    D.safeCap = 0;
+    const s = L.safeToSpend(D, live(D), clock());
+    const now = clock();
+    let msg;
+    if (it.period === 'day') msg = '✓ Safe to spend is now <b>' + fmt(it.amount) + ' a day</b>.' + (s.spentToday ? ' You\'ve spent ' + fmt(s.spentToday) + ' today, so ' + (s.safe > 0 ? '<b>' + fmt(s.safe) + '</b> is left.' : 'today\'s amount is used up.') : '') + ' That\'s about ' + fmt(it.amount * L.daysInMonth(now)) + ' a month.';
+    else {
+      const days = it.period === 'week' ? 7 : L.daysInMonth(now);
+      msg = '✓ Done! ' + fmt(it.amount) + ' a ' + it.period + ' works out to <b>' + fmt(Math.floor(it.amount / days)) + ' a day</b>.';
+      if (s.spentBefore || s.spentToday) msg += ' You\'ve already spent ' + fmt(s.spentBefore + s.spentToday) + ' this ' + it.period + ', so for the ' + s.daysLeft + ' day' + (s.daysLeft === 1 ? '' : 's') + ' left you can spend about <b>' + fmt(Math.max(0, s.perDay)) + ' a day</b>' + (s.spentToday ? (s.safe > 0 ? ' (' + fmt(s.safe) + ' more today)' : ' (today\'s share is used up)') : '') + '.';
+      if (s.pool < 0) msg += ' 😬 You\'re already ' + fmt(-s.pool) + ' over this ' + it.period + '.';
+    }
+    msg += '<br><span class="s12 muted">Rent and bills aren\'t counted here, only everyday spending.</span>';
+    return say(D, msg, { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+  }
+
+  function targetsFor(D, it) {
+    const mineRecs = live(D).filter((r) => r.kind === 'expense' || r.kind === 'loan' || r.kind === 'settlement' || r.kind === 'income' || r.kind === 'saving');
+    const idx = new Map(D.records.map((r, i) => [r.id, i]));
+    const byNew = (a, b) => (b.createdAt - a.createdAt) || (idx.get(b.id) - idx.get(a.id));
+    if (it.scope === 'last') return mineRecs.sort(byNew).slice(0, 1);
+    let list = mineRecs;
+    if (it.scope === 'day') { const d = new Date(clock()); d.setDate(d.getDate() + (it.day || 0)); const k = isoDate(d); list = list.filter((r) => r.date === k); }
+    if (it.scope === 'week') { const ws = isoDate(L.weekStart(clock())); list = list.filter((r) => r.date >= ws); }
+    if (it.kw) { const k = norm(it.kw); list = list.filter((r) => norm([r.note, r.category, r.paidBy, r.borrower, r.lender, r.pot].join(' ')).includes(k) || (r.amount && String(r.amount) === k)); }
+    list = list.sort(byNew);
+    return it.all ? list : list.slice(0, 1);
+  }
+  function removeRecords(D, recs) {
+    recs.forEach((r) => {
+      r.deleted = true; touch(r);
+      if (r.bill) { const b = D.bills.find((x) => x.id === r.bill); if (b) b.paidMonths = (b.paidMonths || []).filter((mk) => mk !== (r.date || '').slice(0, 7)); }
+      if (r.kind === 'saving' && r.potKey) { const neg = -r.amount; if (r.potKey === 'emergency') D.emergency.saved = round2(D.emergency.saved + neg); else { const all = [].concat(D.goals.map((g) => ['goal:' + g.id, g, 'saved']), D.sinking.map((g) => ['sink:' + g.id, g, 'saved']), D.investments.map((g) => ['inv:' + g.id, g, 'total'])); const f = all.find((x) => x[0] === r.potKey); if (f) f[1][f[2]] = round2((f[1][f[2]] || 0) + neg); } }
+    });
+    D.chat.forEach((m) => { if (m.card && m.card.type === 'confirm' && recs.some((r) => r.id === m.card.recId)) m.card.undone = true; });
+  }
+  function keepLabel(n) { return n < 0 ? 'kept forever' : n === 0 ? 'fresh every day (old chats deleted)' : 'kept for ' + n + ' days'; }
+  function chatKeep(D, n) {
+    D.chatKeep = n; pruneChat(D);
+    return say(D, '✓ Chat history is now <b>' + keepLabel(n) + '</b>. Your entries are always saved, this only changes the chat messages.');
+  }
+  function pruneChat(D) {
+    if (D.chatKeep == null) D.chatKeep = 7;
+    if (D.chatKeep < 0) return;
+    const d = new Date(clock()); d.setDate(d.getDate() - D.chatKeep); const cut = isoDate(d);
+    D.chat = D.chat.filter((m) => m.day > cut || m.day === todayISO());
+  }
+  function deleteEntries(D, it) {
+    const recs = targetsFor(D, it);
+    if (!recs.length) return say(D, 'I couldn\'t find ' + (it.kw ? 'any entry for "' + esc(it.kw) + '"' : it.scope === 'day' ? 'any entries for ' + (it.day === -1 ? 'yesterday' : 'today') : 'anything to delete') + ' 🍪');
+    const total = recs.reduce((a, r) => a + (r.kind === 'expense' ? L.shareOf(r, D.me) : 0), 0);
+    if (recs.length === 1) {
+      snapshot(D, 'delete');
+      removeRecords(D, recs);
+      return say(D, '🗑️ Deleted: ' + esc(recLine(D, recs[0])), { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+    }
+    snapshot(D, 'delete');
+    removeRecords(D, recs);
+    return say(D, '🗑️ Deleted <b>' + recs.length + ' entries</b>' + (total ? ' (' + fmt(total) + ' of your spending)' : '') + '.<br><span class="s12 muted">' + recs.slice(0, 6).map((r) => esc((r.note || r.kind) + ' ' + fmt(Math.abs(r.amount)))).join(' · ') + (recs.length > 6 ? ' …' : '') + '</span>', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+  }
+  function editLast(D, ch) {
+    const exp = live(D).filter((x) => x.kind === 'expense');
+    const r = exp.reduce((best, x) => (!best || x.createdAt >= best.createdAt ? x : best), null);
+    if (!r) return say(D, 'There\'s nothing to change yet 🍪');
+    snapshot(D, 'edit last');
+    const before = recLine(D, r);
+    if (ch.amount) {
+      const old = r.amount; const k = ch.amount / (old || 1);
+      Object.keys(r.shares || {}).forEach((p) => { r.shares[p] = round2(r.shares[p] * k); });
+      const sum = Object.values(r.shares).reduce((a, b) => a + b, 0);
+      if (Object.keys(r.shares).length && Math.abs(sum - ch.amount) > 0.01) r.shares[r.paidBy] = round2((r.shares[r.paidBy] || 0) + ch.amount - sum);
+      r.amount = ch.amount;
+    }
+    if (ch.cat) { r.category = ch.cat; const w = norm(r.note).split(' ')[0]; if (w) D.learned[w] = ch.cat; }
+    if (ch.date) r.date = ch.date;
+    if (ch.note) r.note = ch.note;
+    if (ch.splitWith) { r.shares = L.equalShares(r.amount, [D.me, ch.splitWith], r.paidBy, ctx(D).ratios); r.split = 'equal'; }
+    if (ch.justMe) { r.shares = { [D.me]: r.amount }; r.paidBy = D.me; r.split = 'equal'; }
+    touch(r);
+    D.chat.forEach((m) => { if (m.card && m.card.type === 'confirm' && m.card.recId === r.id) { m.card.text = recLine(D, r); m.card.pickCat = false; } });
+    return say(D, '✏️ Changed. Now: <b>' + esc(recLine(D, r)) + '</b>', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+  }
+  function listEntries(D, t) {
+    const per = periodOf(t);
+    const f = inRange(per);
+    const words = t.replace(/^(show|list|view|display|see|find|search)\s+(me\s+)?/, '').replace(/[?.,!]/g, ' ').split(/\s+/).filter((w) => w && !STOPQ.has(w) && !/^(entries|entry|expenses|expense|spends|all|my|of|for|from|transactions|records|logs|today's|todays|items)$/.test(w));
+    const cat = words.map((w) => L.resolveCat(w, ctx(D))).find(Boolean);
+    const pr = people(D).find((p) => words.includes(norm(p.name)));
+    const kw = !cat && !pr ? words[0] : null;
+    const list = live(D).filter((r) => f(r) && (r.kind === 'expense' || r.kind === 'income' || r.kind === 'loan' || r.kind === 'settlement')
+      && (!cat || r.category === cat) && (!pr || L.involves(r, pr.name)) && (!kw || norm([r.note, r.category].join(' ')).includes(kw))).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.createdAt - a.createdAt);
+    if (!list.length) return say(D, 'No entries ' + (cat ? 'in ' + cat + ' ' : kw ? 'for "' + esc(kw) + '" ' : pr ? 'with ' + pr.name + ' ' : '') + per.label + '.');
+    const total = L.mySpend(list, D.me).total;
+    return say(D, '', { type: 'answer', title: (cat || (kw ? titleCase(kw) : pr ? 'With ' + pr.name : 'Entries')) + ' · ' + per.label, big: total ? fmt(total) : '', sub: list.length + ' entr' + (list.length === 1 ? 'y' : 'ies'),
+      rows: list.slice(0, 12).map((r) => ({ label: (r.note || r.category || r.kind) + ' · ' + niceDate(r.date).replace(/^\w+, /, ''), value: r.kind === 'expense' ? fmt(L.shareOf(r, D.me)) : fmt(r.amount) })), link: 'history' });
+  }
+  function unclear(D, it) {
+    const t = it.text; const a = it.amount;
+    const o = [];
+    if (/safe|limit|allowance|daily/.test(t) && a) { o.push(opt('Safe spend ' + fmt(a) + ' a day', { do: 'intent', intent: { type: 'safe-set', amount: a, period: 'day' } }, 'black')); o.push(opt(fmt(a) + ' a month', { do: 'intent', intent: { type: 'safe-set', amount: a, period: 'month' } })); }
+    if (/budget/.test(t) && a) { const c = t.split(' ').map((w) => L.resolveCat(w, ctx(D))).find(Boolean); o.push(opt((c ? c + ' budget ' : 'Monthly budget ') + fmt(a), { do: 'apply', change: { kind: 'budget', cat: c || null, amount: a } }, o.length ? '' : 'black')); }
+    if (/salary|income|earn/.test(t) && a) o.push(opt('Salary ' + fmt(a), { do: 'intent', intent: { type: 'income', amount: a, label: 'Salary' } }));
+    if (/save|saving/.test(t) && a) o.push(opt('Save ' + fmt(a) + ' to emergency', { do: 'intent', intent: { type: 'save', amount: a, pot: 'emergency' } }));
+    if (/delete|remove|clear/.test(t)) o.push(opt('Delete my last entry', { do: 'intent', intent: { type: 'delete', scope: 'last' } }));
+    if (/remind/.test(t)) o.push(opt('Reminder settings', { do: 'open', view: 'settings' }));
+    if (it.expense && it.expense.amount) o.push(opt('Log ' + fmt(it.expense.amount) + ' as a spend', { do: 'intent', intent: Object.assign({}, it.expense, { keyWords: it.expense.keyWords.filter((w) => !['safe', 'spend', 'spending', 'limit', 'per', 'daily'].includes(w)) }) }));
+    else if (a && !o.length) o.push(opt('Log ' + fmt(a) + ' as a spend', { do: 'intent', intent: L.parseExpense(t.replace(/^(set|change|update|make|put|please)\s+/, ''), ctx(D), clock()) }));
+    o.push(opt('Show what I can do', { do: 'intent', intent: { type: 'help' } }));
+    return ask(D, '🤔 I\'m not sure what you mean by "' + esc(t) + '". Did you mean:', o);
+  }
+
   // ---------------- Questions ----------------
   function periodOf(t) {
     const now = clock();
@@ -751,6 +920,9 @@
     const result = { effect: null };
     switch (a.do) {
       case 'noop': if (a.text) say(D, a.text); break;
+      case 'undo': undo(D); break;
+      case 'delete-ids': { snapshot(D, 'delete'); const recs = D.records.filter((r) => a.ids.includes(r.id) && !r.deleted); removeRecords(D, recs); say(D, '🗑️ Deleted ' + recs.length + ' entries.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] }); break; }
+      case 'remove-person': { snapshot(D, 'remove person'); D.people = D.people.filter((p) => !same(p.name, a.person)); say(D, 'Removed ' + esc(a.person) + ' from your people. Their old entries stay in your history.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] }); break; }
       case 'amount': handle(D, String(a.amount)); break;
       case 'apply': say(D, applyChange(D, a.change)); break;
       case 'intent': exec(D, a.intent, ''); break;
@@ -880,6 +1052,7 @@
   // ---------------- Proactive messages ----------------
   function proactive(D) {
     if (D.setup !== 'done') return;
+    pruneChat(D);
     const now = clock(); const day = todayISO(); const mk = monthKey(now);
     const once = (key) => { if (D.nudged[key]) return false; D.nudged[key] = 1; return true; };
     // prune old nudges
@@ -958,6 +1131,6 @@
     return out;
   }
 
-  const api = { paydaySplit, blank, migrateV1, ctx, handle, exec, runAction, proactive, addCaptures, startSetup, setupStep, recLine, splitText, dueSoon, buildPrompt, splitPlan, putInPot, snapshot, undo, live, allCats, niceDate, addRecord, touch, setClock: (f) => { clock = f; }, say, esc };
+  const api = { paydaySplit, keepLabel, pruneChat, blank, migrateV1, ctx, handle, exec, runAction, proactive, addCaptures, startSetup, setupStep, recLine, splitText, dueSoon, buildPrompt, splitPlan, putInPot, snapshot, undo, live, allCats, niceDate, addRecord, touch, setClock: (f) => { clock = f; }, say, esc };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -11,9 +11,9 @@ say('Sanjith'); say('85000'); say('rent 18000 every 5th'); say('arjun riya'); ta
 E.proactive(D);
 ['tea 40','arjun tea 40','arjun me pizza 900','riya paid groceries 1200','tshirt 500','payed to gym'].forEach(say); say('2500'); tap('Yes, monthly');
 ['dinner 2400 my treat','i gave 2000 to kowshik and he needs to return it by 27th'].forEach(say); tap('Add Kowshik');
-['budget food 8000'].forEach(say); tap('Confirm');
+['budget food 8000'].forEach(say);
 ['swiggy 4500','who owes me?','top spends this month?','how much on food this month?','how can i save on food?','salary 85000'].forEach(say); tap('Move it all');
-['goal iphone 80000 by june','save 5000 emergency','rent paid','rent is 19500 from jan'].forEach(say); tap('Confirm');
+['goal iphone 80000 by june','save 5000 emergency','rent paid','rent is 19500 from jan'].forEach(say);
 ['office cab 400 claim','amazon refund 300','start goa trip budget 15000','arjun me hotel 6000','end trip','kowshik gave 500','settle arjun'].forEach(say); tap('Mark');
 ['zudio is shopping','zudio 999','what if i stop ordering swiggy','undo','how much did we spend together with riya?','sent amma 5000','can i spend 2000 today?','foo bar'].forEach(say);
 // SMS capture

@@ -44,3 +44,22 @@ a.strictEqual(L.parseBankSms('Sent Rs.150.00 from Kotak Bank AC X1234 to zomato@
 a.strictEqual(L.parseBankSms('Your OTP for transaction of Rs 500 is 123456'), null);
 a.strictEqual(L.parseBankSms('Rs.5000 credited to your A/c XX1234 by UPI from Arjun'), null);
 console.log('logic tests passed');
+// Smarter commands
+const Q = (s) => L.parse(s, ctx);
+a.strictEqual(Q('4000/30').type, 'math'); a.strictEqual(Q('4000/30').value, 133.33);
+a.strictEqual(Q('divide 4000 by 30').value, 133.33);
+a.strictEqual(Q('what is 18% of 2500').value, 450);
+a.deepStrictEqual([Q('set safe spend to 150').type, Q('set safe spend to 150').period], ['safe-set', 'day']);
+a.deepStrictEqual([Q('safe spend 4000 per month').amount, Q('safe spend 4000 per month').period], [4000, 'month']);
+a.strictEqual(Q('safe spend').type, 'question');
+a.strictEqual(Q('reset safe spend').type, 'safe-reset');
+a.strictEqual(Q('open settings').view, 'settings');
+a.strictEqual(Q('settings').type, 'open');
+a.strictEqual(Q("delete all entries of today's").scope, 'day');
+a.strictEqual(Q('delete last').scope, 'last');
+a.strictEqual(Q('make it 50').change.amount, 50);
+a.strictEqual(Q('change last to shopping').change.cat, 'Shopping');
+a.strictEqual(Q('change name of health to health and lifestyle').type, 'cat-rename');
+a.strictEqual(Q('set something weird 500').type, 'unclear');
+a.strictEqual(Q('safe 150').type, 'unclear');
+console.log('smart command tests passed');
