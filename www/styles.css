@@ -152,3 +152,19 @@ body.kb-open .composer { bottom: calc(8px + var(--kb)); }
 .mini.dark{background:#1B1B1F;color:#fff}
 .conf .split-rows .sr.done span{color:#2f6b00;font-weight:600}
 .qrow .b{white-space:nowrap;padding-left:8px}
+
+/* ---- Charts in chat and pinned cards ---- */
+.chartbox{margin-top:4px;min-width:250px}
+svg.chart{width:100%;height:auto;display:block}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:#5B5A66;margin-top:4px}
+.legend.col{flex-direction:column;gap:4px;font-size:12px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.msg-ck .bub .chartbox{min-width:240px}
+/* typing dots */
+.dots{display:inline-flex;gap:4px;padding:4px 2px}
+.dots i{width:7px;height:7px;border-radius:50%;background:#B9B7C6;animation:dot 1s infinite ease-in-out}
+.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+@keyframes dot{0%,80%,100%{transform:translateY(0);opacity:.5}40%{transform:translateY(-4px);opacity:1}}
+/* ---- Dark mode (filter on the root keeps fixed bars working) ---- */
+html.dark{filter:invert(.9) hue-rotate(180deg);background:#fff}
+html.dark .av svg, html.dark .cookie-btn svg, html.dark .empty svg, html.dark .pot, html.dark .ic, html.dark .split-rows, html.dark .chartbox, html.dark .legend i{filter:invert(1) hue-rotate(180deg)}

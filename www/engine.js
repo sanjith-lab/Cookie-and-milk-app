@@ -2,6 +2,7 @@
 (function (root) {
   'use strict';
   const L = root.Logic || (typeof require !== 'undefined' ? require('./logic.js') : null);
+  const I = root.Insights || (typeof require !== 'undefined' ? require('./insights.js') : null);
   const fmt = (n, o) => L.formatINR(n, o);
   const { same, norm, round2, isoDate, monthKey, titleCase } = L;
 
@@ -17,7 +18,7 @@
       income: { amount: 0, payday: 1, history: [] }, bills: [], goals: [], sinking: [], emergency: { saved: 0 }, investments: [],
       learned: {}, payees: {}, customCats: [], autoSplit: {}, trip: null, trips: [], safeCap: 0, safeMode: 'with-savings',
       reminders: { morning: 9, night: 22, on: true }, recurAsked: {}, nudged: {}, alerted: {}, hideNames: true, hideAmounts: false,
-      plans: [], sync: { url: '', key: '', last: 0 }, sms: { enabled: false, lastScan: 0 }, captured: {}, chat: [], chatKeep: 7, records: [], setup: 'name', pending: null,
+      plans: [], sync: { url: '', key: '', last: 0 }, sms: { enabled: false, lastScan: 0 }, captured: {}, chat: [], chatKeep: 7, layout: null, theme: 'light', ai: { on: true, key: '', model: '' }, records: [], setup: 'name', pending: null,
     };
   }
   function migrateV1(s, recs) {
@@ -40,7 +41,8 @@
     const ratios = { me: D.me };
     people(D).forEach((p) => { if (p.ratio) ratios[norm(p.name)] = p.ratio; });
     const renamed = {}; Object.entries(D.catMeta || {}).forEach(([to, m]) => { renamed[m.from] = to; });
-    return { renamed, me: D.me, people: people(D), shortcuts: D.shortcuts, bills: (D.bills || []).filter((b) => !b.stopped), learned: D.learned, autoSplit: D.autoSplit, customCats: D.customCats, ratios, today: clock() };
+    const lay = D.layout || {};
+    return { layoutTitles: lay.titles || {}, pins: lay.pins || [], renamed, me: D.me, people: people(D), shortcuts: D.shortcuts, bills: (D.bills || []).filter((b) => !b.stopped), learned: D.learned, autoSplit: D.autoSplit, customCats: D.customCats, ratios, today: clock() };
   }
   const live = (D) => D.records.filter((r) => !r.deleted);
   const allCats = (D) => L.CATS.map((c) => c.name).filter((c) => !(D.hiddenCats || []).includes(c)).concat((D.customCats || []).filter((c) => !L.CATS.some((x) => x.name === c)));
@@ -158,8 +160,44 @@
       }
       D.pending = null;
     }
+    // A pasted Gemini key (keep its exact letters)
+    const km = text.match(/^(?:my\s+)?(?:gemini|ai|api)\s*(?:api\s*)?key\s*(?:is|:)?\s*([A-Za-z0-9_\-]{20,})\s*$/i) || text.match(/^\s*(AIza[A-Za-z0-9_\-]{20,})\s*$/);
+    if (km) { const mm = D.chat[D.chat.length - 1]; if (mm && mm.from === 'me') mm.text = '🔑 Gemini key (hidden)'; return exec(D, { type: 'ai-key', key: km[1] }, ''); }
+    // Several spends in one message: "tea 20, samosa 30, auto 60"
+    const multi = multiItems(D, text);
+    if (multi) return multi;
     const intent = L.parse(text, ctx(D));
+    if (wantsAI(D, intent, text)) return { effect: { type: 'ai', text } };
     return exec(D, intent, text);
+  }
+  // Run a command phrase without echoing it as a user message (used by the smart brain)
+  function command(D, text) {
+    D._noAI = true;
+    try { const multi = multiItems(D, text); if (multi) return multi; return exec(D, L.parse(text, ctx(D)), text); } finally { D._noAI = false; }
+  }
+  function aiReady(D) { return !!(D.ai && D.ai.on && D.ai.key); }
+  // Send to the AI brain only what the rules can't handle well
+  function wantsAI(D, it, text) {
+    if (!aiReady(D) || D._noAI) return false;
+    const t = norm(text);
+    if (it.type === 'unclear') return true;
+    if (it.type === 'expense' && !it.amount && (it.cat === 'Other' || t.split(' ').length > 3)) return true;
+    if (it.type === 'expense' && it.amount && it.cat === 'Other' && t.split(' ').length > 5) return true;
+    if ((it.type === 'question' || it.type === 'list') && /\b(why|should|can i|could i|compare|more|less|usual|normal|better|worse|pattern|habit|weekend|weekday|advice|tips?|how (do|can|to|much should)|explain|what if|afford|plan|help me|suggest|reduce|cut|save more|improve)\b/.test(t)) return true;
+    if (it.type === 'advice') return true;
+    return false;
+  }
+  function multiItems(D, text) {
+    const parts = text.split(/\s*[,;\n]\s*|\s+(?:and|&|\+)\s+(?=[a-z][a-z ]*\s+\d)/i).map((x) => x.trim()).filter(Boolean);
+    if (parts.length < 2) return null;
+    const c = ctx(D);
+    const its = parts.map((x) => L.parse(x, c));
+    const ok = its.every((it) => it.type === 'expense' && it.amount && Object.keys(it.shares || {}).every((n) => same(n, D.me)) && it.note && !it.claim);
+    if (!ok) return null;
+    snapshot(D, 'several entries');
+    const recs = its.map((it) => addRecord(D, { kind: 'expense', amount: it.amount, category: it.cat, note: it.note, paidBy: D.me, shares: { [D.me]: it.amount }, split: 'equal', date: it.date || todayISO() }));
+    const total = recs.reduce((a, r) => a + r.amount, 0);
+    return say(D, '✓ Logged <b>' + recs.length + ' spends</b>, ' + fmt(total) + ' in all:<br><span class="s13">' + recs.map((r) => esc(r.note) + ' ' + fmt(r.amount) + ' <span class="muted">· ' + esc(r.category) + '</span>').join('<br>') + '</span>', { type: 'ask', options: [opt('Undo all', { do: 'undo' })] });
   }
 
   function exec(D, it, raw) {
@@ -188,6 +226,24 @@
       case 'safe-reset': snapshot(D, 'safe spend reset'); D.safeRule = null; D.safeCap = 0;
         return say(D, '✓ Safe to spend is back to automatic: worked out from your ' + (D.income.amount ? 'salary, bills and savings plans' : 'budget') + '.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
       case 'collect': return collect(D, it);
+      case 'chart': return chartCard(D, it.spec);
+      case 'explain-safe': { const ex = I.explainSafe(D, clock()); return say(D, '🧮 <b>How I got your safe to spend:</b><br>' + ex.lines.join('<br>')); }
+      case 'backup': return { effect: { type: 'backup' } };
+      case 'backup-when': return say(D, D.lastBackup ? '💾 Last backup: <b>' + new Date(D.lastBackup).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) + '</b>. Type <b>backup now</b> for a fresh one.' : 'No backup yet. Type <b>backup now</b> and I\'ll save one.');
+      case 'theme': D.theme = it.dark ? 'dark' : 'light'; return say(D, it.dark ? '🌙 Dark mode on. Say <b>light mode</b> to switch back.' : '☀️ Light mode on.');
+      case 'settings-card': return settingsCard(D);
+      case 'open-sheet': say(D, '👉 Opening ' + ({ chathist: 'chat history', ai: 'AI brain' }[it.sheet] || it.sheet) + ' settings.'); return { effect: { type: 'sheet', sheet: it.sheet } };
+      case 'set-name': { if (!it.name) return; snapshot(D, 'name'); const old = D.me; renameEverywhere(D, old, it.name); D.me = it.name; return say(D, '✓ I\'ll call you <b>' + esc(it.name) + '</b> now.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] }); }
+      case 'person-rename': { if (people(D).some((p) => same(p.name, it.name))) return say(D, it.name + ' already exists.'); snapshot(D, 'rename person'); renameEverywhere(D, it.person, it.name); person(D, it.person).name = it.name; return say(D, '✓ ' + esc(it.person) + ' is now <b>' + esc(it.name) + '</b> everywhere.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] }); }
+      case 'payday': snapshot(D, 'payday'); D.income.payday = it.day; return say(D, '📅 Payday set to the <b>' + it.day + ordinal(it.day) + '</b>. I\'ll plan your month around it.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+      case 'cat-delete': return catDelete(D, it.cat);
+      case 'budget-remove': snapshot(D, 'budget'); if (it.cat === '__all') D.budget = 0; else if (D.catBudgets) delete D.catBudgets[it.cat];
+        return say(D, '✓ ' + (it.cat === '__all' ? 'Monthly budget' : esc(it.cat) + ' budget') + ' removed.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+      case 'sms-off': snapshot(D, 'payment detection'); D.sms.enabled = false; return say(D, '📴 Payment detection is off. Say <b>turn on payment detection</b> any time.');
+      case 'layout': return layoutOp(D, it);
+      case 'ai-key': D.ai = Object.assign({ on: true }, D.ai, { key: it.key, on: true, model: '' }); return say(D, '🔑 Saved your Gemini key. Smart mode is on! Try asking me anything, like <b>am I spending more on weekends?</b>');
+      case 'ai-toggle': D.ai = Object.assign({}, D.ai, { on: it.on }); return say(D, it.on ? (D.ai.key ? '🧠 Smart mode is on.' : '🧠 Smart mode needs a free Gemini key. Tap below to set it up.') : '🧠 Smart mode is off. I\'ll use my built-in rules only.', !D.ai.key && it.on ? { type: 'ask', options: [opt('Set up smart mode', { do: 'sheet', sheet: 'ai' }, 'black')] } : undefined);
+      case 'ai': if (!aiReady(D)) return say(D, '🧠 Smart mode needs a free Gemini key first.', { type: 'ask', options: [opt('Set up smart mode', { do: 'sheet', sheet: 'ai' }, 'black')] }); return { effect: { type: 'ai', text: it.text } };
       case 'chat-keep': return chatKeep(D, it.days);
       case 'chat-clear': D.chatClearedAt = clock().getTime(); return say(D, '🧹 Fresh chat! Everything you logged is still saved.');
       case 'delete': return deleteEntries(D, it);
@@ -696,6 +752,7 @@
     if (!r) return say(D, 'There\'s nothing to change yet 🍪');
     snapshot(D, 'edit last');
     const before = recLine(D, r);
+    if (ch.factor) ch.amount = round2(r.amount * ch.factor);
     if (ch.amount) {
       const old = r.amount; const k = ch.amount / (old || 1);
       Object.keys(r.shares || {}).forEach((p) => { r.shares[p] = round2(r.shares[p] * k); });
@@ -741,6 +798,104 @@
     return ask(D, '🤔 I\'m not sure what you mean by "' + esc(t) + '". Did you mean:', o);
   }
 
+
+
+  // ---------------- Charts, layout, settings helpers ----------------
+  function chartCard(D, spec) {
+    const data = I.chart(D, spec, clock());
+    return say(D, '', { type: 'chart', spec, data, options: [opt('📌 Pin to overview', { do: 'pin', spec }), opt('All charts', { do: 'open', view: 'charts' })] });
+  }
+  function ordinal(n) { return n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'; }
+  function renameEverywhere(D, from, to) {
+    const sw = (v) => (same(v, from) ? to : v);
+    D.records.forEach((r) => {
+      ['paidBy', 'from', 'to', 'lender', 'borrower', 'person', 'who'].forEach((k) => { if (r[k]) r[k] = sw(r[k]); });
+      if (r.shares) { const ns = {}; Object.keys(r.shares).forEach((k) => { ns[sw(k)] = r.shares[k]; }); r.shares = ns; }
+      if (Array.isArray(r.repayments)) r.repayments.forEach((x) => { if (x.by) x.by = sw(x.by); });
+    });
+    Object.keys(D.shortcuts || {}).forEach((k) => { D.shortcuts[k] = D.shortcuts[k].map(sw); });
+    Object.keys(D.autoSplit || {}).forEach((k) => { D.autoSplit[k] = D.autoSplit[k].map(sw); });
+  }
+  function catDelete(D, cat) {
+    if (cat === 'Other') return say(D, 'Other can\'t be deleted, it catches everything else.');
+    const n = D.records.filter((r) => r.category === cat).length;
+    snapshot(D, 'delete category');
+    D.records.forEach((r) => { if (r.category === cat) r.category = 'Other'; });
+    (D.bills || []).forEach((b) => { if (b.category === cat) b.category = 'Other'; });
+    if (D.catBudgets) delete D.catBudgets[cat];
+    Object.keys(D.learned || {}).forEach((k) => { if (D.learned[k] === cat) delete D.learned[k]; });
+    D.customCats = (D.customCats || []).filter((c) => !same(c, cat));
+    D.hiddenCats = (D.hiddenCats || []).concat([cat]);
+    return say(D, '🗑️ Category <b>' + esc(cat) + '</b> removed.' + (n ? ' Its ' + n + ' entr' + (n === 1 ? 'y moved' : 'ies moved') + ' to Other.' : ''), { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+  }
+  function settingsCard(D) {
+    const rows = [
+      { label: 'Name', value: D.me || 'not set' },
+      { label: 'Salary', value: D.income.amount ? fmt(D.income.amount) + ' · payday ' + (D.income.payday || 1) + ordinal(D.income.payday || 1) : 'not set' },
+      { label: 'Monthly budget', value: D.budget ? fmt(D.budget) : 'not set' },
+      { label: 'Safe to spend', value: D.safeRule ? fmt(D.safeRule.amount) + ' a ' + D.safeRule.period : D.safeCap ? 'max ' + fmt(D.safeCap) + '/day' : 'automatic' },
+      { label: 'Category budgets', value: String(Object.keys(D.catBudgets || {}).length) },
+      { label: 'Bills', value: String((D.bills || []).filter((b) => !b.stopped).length) },
+      { label: 'People', value: String(people(D).length) },
+      { label: 'Reminders', value: D.reminders.on ? 'on · ' + hourText(Math.floor(D.reminders.morning), 0) + ' & ' + hourText(Math.floor(D.reminders.night), 0) : 'off' },
+      { label: 'Payment detection', value: D.sms.enabled ? 'on' : 'off' },
+      { label: 'Chat history', value: D.chatKeep < 0 ? 'forever' : D.chatKeep === 0 ? 'today only' : (D.chatKeep == null ? 7 : D.chatKeep) + ' days' },
+      { label: 'Smart mode (Gemini)', value: D.ai && D.ai.key ? (D.ai.on ? 'on' : 'off') : 'not set up' },
+      { label: 'Theme', value: D.theme === 'dark' ? 'dark' : 'light' },
+      { label: 'Last backup', value: D.lastBackup ? new Date(D.lastBackup).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'never' },
+    ];
+    return say(D, '', { type: 'answer', title: '⚙️ Your settings', rows, note: 'Change anything by just saying it, like <b>payday 5th</b>, <b>dark mode</b> or <b>open bills</b>.', options: [opt('Open all settings', { do: 'open', view: 'settings' }, 'black')] });
+  }
+  const DEFAULT_ORDER = ['summary', 'due', 'trip', 'people', 'budgets', 'savings', 'week', 'recent', 'plan'];
+  const DEFAULT_TITLES = { summary: 'Spent this month', due: 'Due soon', trip: 'Trip', people: 'People', budgets: 'Budgets', savings: 'Savings', week: 'This week', recent: 'Recent', plan: 'Your plan', 'pot:emergency': 'Emergency', 'pot:goals': 'Goals', 'pot:sinking': 'Sinking funds', 'pot:investments': 'Investments' };
+  function layout(D) {
+    if (!D.layout) D.layout = {};
+    const l = D.layout;
+    l.order = Array.isArray(l.order) ? l.order : DEFAULT_ORDER.slice();
+    DEFAULT_ORDER.forEach((id) => { if (!l.order.includes(id)) l.order.push(id); });
+    l.hidden = l.hidden || []; l.titles = l.titles || {}; l.pins = l.pins || []; l.recentN = l.recentN || 5; l.pots = l.pots || [];
+    l.pins.forEach((p) => { if (!l.order.includes(p.id)) l.order.push(p.id); });
+    l.order = l.order.filter((id) => DEFAULT_ORDER.includes(id) || l.pins.some((p) => p.id === id));
+    return l;
+  }
+  const titleOf = (D, id) => { const l = layout(D); if (l.titles[id]) return l.titles[id]; const p = l.pins.find((x) => x.id === id); return p ? p.title : DEFAULT_TITLES[id] || id; };
+  function layoutOp(D, it) {
+    const l = layout(D);
+    const done = (msg) => say(D, msg, { type: 'ask', options: [opt('Undo', { do: 'undo' }), opt('See overview', { do: 'open', view: 'overview' })] });
+    const pos = (id) => l.order.indexOf(id);
+    switch (it.op) {
+      case 'reset': snapshot(D, 'layout'); D.layout = null; layout(D); return done('🔄 Overview is back to the default layout.');
+      case 'rename': snapshot(D, 'layout'); { const old = titleOf(D, it.id); l.titles[it.id] = it.title; return done('✏️ <b>' + esc(old) + '</b> is now called <b>' + esc(it.title) + '</b>. It\'s just the name, your money maths stays the same.'); }
+      case 'hide': snapshot(D, 'layout'); if (!l.hidden.includes(it.id)) l.hidden.push(it.id); return done('🙈 <b>' + esc(titleOf(D, it.id)) + '</b> is hidden from the overview. Nothing is deleted. Say <b>show ' + esc(titleOf(D, it.id).toLowerCase()) + '</b> to bring it back.');
+      case 'show': snapshot(D, 'layout'); l.hidden = l.hidden.filter((x) => x !== it.id); return done('👀 <b>' + esc(titleOf(D, it.id)) + '</b> is back.');
+      case 'only': snapshot(D, 'layout'); { const keep = it.ids.filter((x) => !x.startsWith('pot:')); l.hidden = l.order.filter((x) => !keep.includes(x)); l.order = keep.concat(l.order.filter((x) => !keep.includes(x))); return done('✨ Overview now shows only ' + keep.map((x) => '<b>' + esc(titleOf(D, x)) + '</b>').join(', ') + '. Say <b>reset overview</b> to undo it all.'); }
+      case 'move': {
+        if (it.id.startsWith('pot:')) return movePot(D, it, done);
+        snapshot(D, 'layout'); const arr = l.order.filter((x) => x !== it.id); let at;
+        if (it.pos === 'top') at = 0; else if (it.pos === 'bottom') at = arr.length; else if (it.pos === 'up') at = Math.max(0, pos(it.id) - 1); else if (it.pos === 'down') at = Math.min(arr.length, pos(it.id) + 1);
+        else { if (!it.rel || it.rel === it.id || it.rel.startsWith('pot:')) return say(D, 'Move it next to which card?'); at = arr.indexOf(it.rel) + (it.pos === 'after' ? 1 : 0); }
+        arr.splice(at, 0, it.id); l.order = arr; l.hidden = l.hidden.filter((x) => x !== it.id);
+        return done('↕️ Moved <b>' + esc(titleOf(D, it.id)) + '</b> ' + ({ top: 'to the top', bottom: 'to the bottom', up: 'up', down: 'down', before: 'above ' + esc(titleOf(D, it.rel)), after: 'below ' + esc(titleOf(D, it.rel)) })[it.pos] + '.');
+      }
+      case 'swap': { if (it.a.startsWith('pot:') || it.b.startsWith('pot:')) { snapshot(D, 'layout'); const order = potOrder(D); const i = order.indexOf(it.a), j = order.indexOf(it.b); if (i < 0 || j < 0) return say(D, 'I can only swap two cards of the same kind.'); [order[i], order[j]] = [order[j], order[i]]; l.potOrder = order; return done('🔀 Swapped.'); }
+        snapshot(D, 'layout'); const i = pos(it.a), j = pos(it.b); l.order[i] = it.b; l.order[j] = it.a; return done('🔀 Swapped <b>' + esc(titleOf(D, it.a)) + '</b> and <b>' + esc(titleOf(D, it.b)) + '</b>.'); }
+      case 'recent-n': snapshot(D, 'layout'); l.recentN = Math.max(1, Math.min(30, it.n)); return done('✓ Recent now shows <b>' + l.recentN + '</b> items.');
+      case 'pin-last': { const m = [...D.chat].reverse().find((x) => x.card && x.card.type === 'chart'); if (!m) return say(D, 'Ask me for a graph first, like <b>this month vs last month</b>, then say <b>pin this</b>.'); return pin(D, m.card.spec); }
+      case 'pin': { const ch = L.parseChart('chart ' + norm(it.what), ctx(D)); return pin(D, ch ? ch.spec : { chart: 'compare' }, it.what); }
+      case 'add-pot': { snapshot(D, 'new savings card'); const g = { id: uid(), name: it.name, target: it.target || 0, saved: 0 }; D.goals.push(g); l.pots.push('goal:' + g.id);
+        return done('🫙 New savings card <b>' + esc(it.name) + '</b>' + (it.target ? ' with a target of ' + fmt(it.target) : '') + '. Add money any time: <b>save 2000 ' + esc(it.name.toLowerCase()) + '</b>.'); }
+    }
+    return say(D, 'I couldn\'t change that one.');
+  }
+  function potOrder(D) { const l = layout(D); const base = ['pot:emergency', 'pot:goals', 'pot:sinking', 'pot:investments']; const o = (l.potOrder || base).filter((x) => base.includes(x)); base.forEach((x) => { if (!o.includes(x)) o.push(x); }); return o; }
+  function movePot(D, it, done) { snapshot(D, 'layout'); const l = layout(D); const o = potOrder(D).filter((x) => x !== it.id); let at = it.pos === 'top' ? 0 : it.pos === 'bottom' ? o.length : it.rel && it.rel.startsWith('pot:') ? o.indexOf(it.rel) + (it.pos === 'after' ? 1 : 0) : 0; o.splice(at, 0, it.id); l.potOrder = o; return done('↕️ Moved <b>' + esc(titleOf(D, it.id)) + '</b>.'); }
+  function pin(D, spec, what) {
+    const l = layout(D); snapshot(D, 'pin');
+    const data = I.chart(D, spec, clock());
+    const id = 'pin:' + uid(); const title = what ? titleCase(what) : data.title;
+    l.pins.push({ id, spec, title }); l.order.splice(0, 0, id);
+    return say(D, '📌 Pinned <b>' + esc(title) + '</b> to the top of your overview. It updates live.', { type: 'ask', options: [opt('Undo', { do: 'undo' }), opt('See overview', { do: 'open', view: 'overview' })] });
+  }
 
   // ---------------- Group bill collection ----------------
   // Net position with a person: positive = they owe me, negative = I owe them
@@ -985,6 +1140,7 @@
   // ---------------- Help ----------------
   function help(D) {
     return say(D, '', { type: 'answer', title: 'Things you can tell me 🍪', rows: [
+      { label: 'tea 20, samosa 30, auto 60', value: '3 entries at once' }, { label: 'this month vs last month', value: 'graph' }, { label: 'where did my money go', value: 'category ring' }, { label: 'show my settings', value: 'all settings' }, { label: 'move recent to the top', value: 'arrange overview' }, { label: 'rename savings to investments', value: 'rename a card' }, { label: 'pin this', value: 'graph on overview' }, { label: 'why is my safe to spend 0', value: 'the maths' }, { label: 'backup now', value: 'save a backup' }, { label: 'dark mode', value: 'theme' }, { label: 'open ai settings', value: 'smart mode (Gemini)' },
       { label: 'tea 40', value: 'just you' }, { label: 'arjun me pizza 900', value: 'split 2 ways' }, { label: 'arjun tea 40', value: 'Arjun owes all' },
       { label: 'arjun paid dinner 900', value: 'you owe half' }, { label: 'dinner 2400 my treat', value: 'no split' }, { label: 'rent paid / emi paid', value: 'mark a bill paid' },
       { label: 'rent 18000 every 5th', value: 'add a bill' }, { label: 'salary 85000', value: 'income + payday split' }, { label: 'save 5000 emergency', value: 'savings' },
@@ -1012,6 +1168,9 @@
     switch (a.do) {
       case 'noop': if (a.text) say(D, a.text); break;
       case 'undo': undo(D); break;
+      case 'pin': pin(D, a.spec); break;
+      case 'ai-run': a.cmds.forEach((c) => { const r = command(D, c); if (r && r.effect && !result.effect) result.effect = r.effect; }); break;
+      case 'sheet': result.effect = { type: 'sheet', sheet: a.sheet }; break;
       case 'direct': { snapshot(D, 'direct payments'); a.plan.forEach((p) => { addRecord(D, { kind: 'settlement', amount: p.amount, from: p.from, to: D.me, note: 'paid ' + p.to + ' directly' }); addRecord(D, { kind: 'settlement', amount: p.amount, from: D.me, to: p.to, note: 'via ' + p.from }); }); say(D, '✓ Noted! ' + a.plan.map((p) => esc(p.from) + ' paid ' + esc(p.to) + ' ' + fmt(p.amount)).join(', ') + '.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] }); break; }
       case 'delete-ids': { snapshot(D, 'delete'); const recs = D.records.filter((r) => a.ids.includes(r.id) && !r.deleted); removeRecords(D, recs); say(D, '🗑️ Deleted ' + recs.length + ' entries.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] }); break; }
       case 'remove-person': { snapshot(D, 'remove person'); D.people = D.people.filter((p) => !same(p.name, a.person)); say(D, 'Removed ' + esc(a.person) + ' from your people. Their old entries stay in your history.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] }); break; }
@@ -1223,6 +1382,6 @@
     return out;
   }
 
-  const api = { splitRows, netWith, paydaySplit, keepLabel, pruneChat, blank, migrateV1, ctx, handle, exec, runAction, proactive, addCaptures, startSetup, setupStep, recLine, splitText, dueSoon, buildPrompt, splitPlan, putInPot, snapshot, undo, live, allCats, niceDate, addRecord, touch, setClock: (f) => { clock = f; }, say, esc };
+  const api = { command, layout, titleOf, potOrder, aiReady, wantsAI, splitRows, netWith, paydaySplit, keepLabel, pruneChat, blank, migrateV1, ctx, handle, exec, runAction, proactive, addCaptures, startSetup, setupStep, recLine, splitText, dueSoon, buildPrompt, splitPlan, putInPot, snapshot, undo, live, allCats, niceDate, addRecord, touch, setClock: (f) => { clock = f; }, say, esc };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(typeof window !== 'undefined' ? window : globalThis);

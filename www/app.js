@@ -66,6 +66,7 @@
   // ---------- Render ----------
   function render() {
     document.body.classList.toggle('hide-amt', !!D.hideAmounts);
+    document.documentElement.classList.toggle('dark', D.theme === 'dark');
     let h = header();
     if (D.setup !== 'done' || ui.view === 'chat') h += chatView(); else h += overview();
     if (ui.page) h += '<div class="sub">' + pageView() + '</div>';
@@ -141,6 +142,8 @@
         if (c.note) inner += '<span class="s12 muted">' + c.note + '</span>';
         if (c.link) inner += '<button class="link" style="text-align:left" data-act="open" data-v="' + esc(c.link) + '">See more ›</button>';
       }
+      if (c.type === 'chart' && c.data) inner += '<span class="b">' + esc(c.data.title) + '</span>' + chartBody(c.data);
+      if (c.type === 'thinking') inner += '<span class="dots"><i></i><i></i><i></i></span>';
       if (c.type === 'advice') {
         inner += '<div class="prompt-box">' + esc(c.prompt) + '</div><div class="btns"><button class="btn black" data-act="ai-share" data-msg="' + m.id + '">' + svg(P.share, 2, 'width="14" height="14"') + ' Ask AI</button><button class="btn" data-act="ai-copy" data-msg="' + m.id + '">' + svg(P.copy, 2, 'width="14" height="14"') + ' Copy</button></div>' +
           '<span class="s11 muted">' + (D.hideNames ? 'Friends\' names are hidden. ' : '') + 'Paste the AI\'s reply here and I\'ll save it as your plan.</span>';
@@ -165,13 +168,14 @@
     const spent = L.mySpend(recs, D.me, (r) => (r.date || '').startsWith(mk)).total;
     const base = (D.income.amount ? D.income.amount : D.budget) || 0;
     const pct = base ? Math.min(1, spent / base) : 0;
+    const lay = E.layout(D); const T = (id) => esc(E.titleOf(D, id)); const sec = {};
     let h = '<div class="page">';
-    h += '<div class="card black row" style="gap:14px"><svg width="76" height="76" viewBox="0 0 120 120"><circle cx="60" cy="60" r="46" fill="none" stroke="#34343B" stroke-width="14"/>' + (pct ? '<circle cx="60" cy="60" r="46" fill="none" stroke="' + (pct > 0.9 ? '#F2A0AE' : '#D8F27E') + '" stroke-width="14" stroke-linecap="round" stroke-dasharray="' + (pct * 289).toFixed(0) + ' 289" transform="rotate(-90 60 60)"/>' : '') + '<text x="60" y="68" text-anchor="middle" font-size="24" font-weight="800" fill="#fff" font-family="PJS">' + Math.round(pct * 100) + '%</text></svg>' +
-      '<div class="grow"><div class="s13" style="color:#C9C8D1">Spent this month</div><div class="xb" style="font-size:24px">' + amt(fmt(spent)) + '</div><div class="s12" style="color:#C9C8D1">' + (base ? 'of ' + amt(fmt(base)) + (D.income.amount ? ' income' : ' budget') : 'Add your salary in chat: <b>salary 85000</b>') + (s ? ' · ' + s.daysLeft + ' days left' : '') + '</div></div></div>';
+    sec.summary = '<div class="card black row" style="gap:14px"><svg width="76" height="76" viewBox="0 0 120 120"><circle cx="60" cy="60" r="46" fill="none" stroke="#34343B" stroke-width="14"/>' + (pct ? '<circle cx="60" cy="60" r="46" fill="none" stroke="' + (pct > 0.9 ? '#F2A0AE' : '#D8F27E') + '" stroke-width="14" stroke-linecap="round" stroke-dasharray="' + (pct * 289).toFixed(0) + ' 289" transform="rotate(-90 60 60)"/>' : '') + '<text x="60" y="68" text-anchor="middle" font-size="24" font-weight="800" fill="#fff" font-family="PJS">' + Math.round(pct * 100) + '%</text></svg>' +
+      '<div class="grow"><div class="s13" style="color:#C9C8D1">' + T('summary') + '</div><div class="xb" style="font-size:24px">' + amt(fmt(spent)) + '</div><div class="s12" style="color:#C9C8D1">' + (base ? 'of ' + amt(fmt(base)) + (D.income.amount ? ' income' : ' budget') : 'Add your salary in chat: <b>salary 85000</b>') + (s ? ' · ' + s.daysLeft + ' days left' : '') + '</div></div></div>';
     // Due soon
     const due = E.dueSoon(D);
     if (due.length) {
-      h += '<div class="card"><div class="card-h"><span class="t">Due soon</span><span class="s12 muted">bills, friends and loans</span></div>' + due.slice(0, 8).map((d) => {
+      sec.due = '<div class="card"><div class="card-h"><span class="t">' + T('due') + '</span><span class="s12 muted">bills, friends and loans</span></div>' + due.slice(0, 8).map((d) => {
         const icon = d.kind === 'bill' ? '<span class="ic" style="background:' + (d.urgent ? '#1B1B1F;color:#D8F27E' : '#EEEDF3') + '">' + d.day + '</span>' : d.kind === 'claim' ? '<span class="ic" style="background:#DCEAF4">' + svg(P.bill) + '</span>' : '<span class="ic" style="background:' + avColor(d.title) + '">' + initial(d.title.replace(/^You owe /, '')) + '</span>';
         const btn = d.kind === 'bill' ? '<button class="btn lime" data-act="do" data-t="bill-paid" data-id="' + d.id + '">Mark paid</button>'
           : d.kind === 'friend' ? '<button class="btn ' + (d.incoming ? '' : 'black') + '" data-act="say" data-text="settle ' + esc(norm(d.id)) + '">' + (d.incoming ? 'Settle' : 'Pay') + '</button>'
@@ -182,38 +186,96 @@
     // Trip
     if (D.trip) {
       const tr = recs.filter((r) => r.trip === D.trip.id); const tm = L.mySpend(tr, D.me).total; const tt = tr.reduce((a, r) => a + (r.amount > 0 ? r.amount : 0), 0);
-      h += '<div class="card" style="background:#D7F0E6"><div class="card-h"><span class="t">🏝️ ' + esc(D.trip.name) + ' trip</span><button class="btn black" data-act="say" data-text="end trip">End trip</button></div>' +
+      sec.trip = '<div class="card" style="background:#D7F0E6"><div class="card-h"><span class="t">🏝️ ' + esc(D.trip.name) + ' trip</span><button class="btn black" data-act="say" data-text="end trip">End trip</button></div>' +
         '<div class="row between"><div><div class="s12 muted">Your share so far</div><div class="xb" style="font-size:22px">' + amt(fmt(tm)) + '</div><div class="s12 muted">group total ' + amt(fmt(tt)) + '</div></div>' +
         (D.trip.budget ? '<div style="text-align:right"><div class="s12 muted">Budget left</div><div class="xb" style="font-size:18px;' + (D.trip.budget - tm < 0 ? 'color:#B3261E' : '') + '">' + amt(fmt(D.trip.budget - tm)) + '</div></div>' : '') + '</div>' +
         (D.trip.budget ? '<div class="bar" style="margin-top:10px;background:#fff"><i style="width:' + Math.min(100, tm / D.trip.budget * 100).toFixed(0) + '%;background:#1B1B1F"></i></div>' : '') + '</div>';
     }
     // People
     const together = D.people.map((p) => ({ p, st: L.togetherStats(recs, D.me, p.name, (r) => (r.date || '').startsWith(mk)) })).filter((x) => x.st.together || x.st.myTreats || x.st.theirTreats).sort((a, b) => b.st.together - a.st.together).slice(0, 3);
+    sec.people = '';
     together.forEach(({ p, st }) => {
       const bal = L.balanceWith(recs, D.me, p.name);
-      h += '<button class="card" style="text-align:left;background:#E4E0F7" data-act="open" data-v="person:' + esc(p.name) + '"><div class="card-h"><span class="t">You &amp; ' + esc(p.name) + '</span><span class="link">Details ›</span></div><div class="row between"><div><div class="s12" style="color:#3E3B52">Spent together this month</div><div class="xb" style="font-size:22px">' + amt(fmt(st.together)) + '</div></div><div style="text-align:right"><div class="s12" style="color:#3E3B52">' + (bal === 0 ? 'All settled' : bal > 0 ? p.name + ' owes you' : 'You owe') + '</div><div class="xb">' + (bal ? amt(fmt(Math.abs(bal))) : '✓') + '</div></div></div></button>';
+      sec.people += '<button class="card" style="text-align:left;background:#E4E0F7" data-act="open" data-v="person:' + esc(p.name) + '"><div class="card-h"><span class="t">You &amp; ' + esc(p.name) + '</span><span class="link">Details ›</span></div><div class="row between"><div><div class="s12" style="color:#3E3B52">Spent together this month</div><div class="xb" style="font-size:22px">' + amt(fmt(st.together)) + '</div></div><div style="text-align:right"><div class="s12" style="color:#3E3B52">' + (bal === 0 ? 'All settled' : bal > 0 ? p.name + ' owes you' : 'You owe') + '</div><div class="xb">' + (bal ? amt(fmt(Math.abs(bal))) : '✓') + '</div></div></div></button>';
     });
     // Budgets
     const bud = Object.entries(D.catBudgets || {}).filter(([, v]) => v > 0);
     const byCat = L.mySpend(recs, D.me, (r) => (r.date || '').startsWith(mk)).byCat;
-    h += '<div class="card"><div class="card-h"><span class="t">Budgets</span><span class="s12 muted">' + (s ? s.daysLeft + ' days left' : '') + '</span></div>';
-    if (!bud.length) h += '<div class="s13 muted">No category budgets yet. Type <b>budget food 8000</b> in the chat.</div>';
-    bud.forEach(([k, v]) => { const u = byCat[k] || 0; const p = u / v; h += '<div style="padding:7px 0"><div class="row between s13"><span class="b">' + esc(k) + '</span><span class="' + (p >= 1 ? 'red b' : 'muted') + '">' + amt(fmt(u) + ' / ' + fmt(v)) + '</span></div><div class="bar" style="margin-top:6px"><i style="width:' + Math.min(100, p * 100).toFixed(0) + '%;background:' + (p >= 1 ? '#E5484D' : catDef(k).fg) + '"></i></div></div>'; });
-    h += '</div>';
+    let bh = '<div class="card"><div class="card-h"><span class="t">' + T('budgets') + '</span><span class="s12 muted">' + (s ? s.daysLeft + ' days left' : '') + '</span></div>';
+    if (!bud.length) bh += '<div class="s13 muted">No category budgets yet. Type <b>budget food 8000</b> in the chat.</div>';
+    bud.forEach(([k, v]) => { const u = byCat[k] || 0; const p = u / v; bh += '<div style="padding:7px 0"><div class="row between s13"><span class="b">' + esc(k) + '</span><span class="' + (p >= 1 ? 'red b' : 'muted') + '">' + amt(fmt(u) + ' / ' + fmt(v)) + '</span></div><div class="bar" style="margin-top:6px"><i style="width:' + Math.min(100, p * 100).toFixed(0) + '%;background:' + (p >= 1 ? '#E5484D' : catDef(k).fg) + '"></i></div></div>'; });
+    sec.budgets = bh + '</div>';
     // Savings
-    h += '<div class="row between"><span class="b" style="font-size:15px">Savings</span><button class="link" data-act="open" data-v="savings">All savings ›</button></div>' + potsGrid();
+    sec.savings = '<div class="row between"><span class="b" style="font-size:15px">' + T('savings') + '</span><button class="link" data-act="open" data-v="savings">All savings ›</button></div>' + potsGrid();
     // Week
     const ws = L.weekStart(now); const week = L.daySeries(recs, D.me, ws, 7, false); const mx = Math.max(1, ...week.map((d) => d.total)); const wt = week.reduce((a, d) => a + d.total, 0);
     const fixedMonth = L.mySpend(recs, D.me, (r) => (r.date || '').startsWith(mk) && L.FIXED.has(r.category)).total;
-    h += '<div class="card"><div class="card-h"><span class="t">This week</span><span class="s12 b" style="background:#EEEDF3;border-radius:999px;padding:4px 10px">everyday ' + amt(fmt(wt)) + '</span></div><div class="week" style="height:120px">' +
+    sec.week = '<div class="card"><div class="card-h"><span class="t">' + T('week') + '</span><span class="s12 b" style="background:#EEEDF3;border-radius:999px;padding:4px 10px">everyday ' + amt(fmt(wt)) + '</span></div><div class="week" style="height:120px">' +
       week.map((d, i) => '<div class="col" style="height:120px"><span class="bb' + (d.key === L.isoDate(now) ? ' today' : '') + '" style="height:' + Math.max(4, d.total / mx * 92).toFixed(0) + 'px"></span><span class="s12 ' + (d.key === L.isoDate(now) ? 'b' : 'muted') + '">' + 'MTWTFSS'[i] + '</span></div>').join('') +
       '</div><div class="row between" style="margin-top:10px"><span class="s12 muted">Fixed costs this month: ' + amt(fmt(fixedMonth)) + '</span><button class="link" data-act="open" data-v="charts">All charts ›</button></div></div>';
     // Recent
-    const recent = recs.filter((r) => r.kind !== 'saving' && L.involves(r, D.me) || r.kind === 'saving' || r.kind === 'income').sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
-    h += '<div class="card"><div class="card-h"><span class="t">Recent</span><button class="link" data-act="open" data-v="history">Full history ›</button></div>' + (recent.length ? recent.map(txRow).join('') : '<div class="s13 muted">Nothing yet.</div>') + '</div>';
-    if (D.plans && D.plans.length) { const pl = D.plans[D.plans.length - 1]; h += '<div class="card lime"><div class="card-h"><span class="t">📌 Your plan</span><button class="link" data-act="plan-del">Remove</button></div><div class="s13" style="white-space:pre-wrap;max-height:220px;overflow:auto">' + esc(pl.text) + '</div><div class="s11" style="margin-top:6px;color:#3F4A16">Saved ' + esc(E.niceDate(pl.date)) + '</div></div>'; }
+    const recent = recs.filter((r) => r.kind !== 'saving' && L.involves(r, D.me) || r.kind === 'saving' || r.kind === 'income').sort((a, b) => b.createdAt - a.createdAt).slice(0, lay.recentN || 5);
+    sec.recent = '<div class="card"><div class="card-h"><span class="t">' + T('recent') + '</span><button class="link" data-act="open" data-v="history">Full history ›</button></div>' + (recent.length ? recent.map(txRow).join('') : '<div class="s13 muted">Nothing yet.</div>') + '</div>';
+    if (D.plans && D.plans.length) { const pl = D.plans[D.plans.length - 1]; sec.plan = '<div class="card lime"><div class="card-h"><span class="t">📌 ' + T('plan') + '</span><button class="link" data-act="plan-del">Remove</button></div><div class="s13" style="white-space:pre-wrap;max-height:220px;overflow:auto">' + esc(pl.text) + '</div><div class="s11" style="margin-top:6px;color:#3F4A16">Saved ' + esc(E.niceDate(pl.date)) + '</div></div>'; }
+    // Pinned live cards
+    lay.pins.forEach((pin) => { let data; try { data = Insights.chart(D, pin.spec, new Date()); } catch (e) { data = null; }
+      sec[pin.id] = '<div class="card"><div class="card-h"><span class="t">' + esc(pin.title) + '</span><button class="link" data-act="unpin" data-id="' + esc(pin.id) + '">Remove</button></div>' + (data ? chartBody(data) : '') + '</div>'; });
+    h += lay.order.filter((id) => !lay.hidden.includes(id)).map((id) => sec[id] || '').join('');
+    if (lay.hidden.length) h += '<div class="s12 muted" style="text-align:center">' + lay.hidden.length + ' card' + (lay.hidden.length === 1 ? ' is' : 's are') + ' hidden. Say <b>reset overview</b> or <b>show budgets</b> in the chat.</div>';
     h += '<div style="height:10px"></div></div>';
     return h;
+  }
+
+  // ---------- Charts (chat cards and pinned cards) ----------
+  function chartBody(d) {
+    let h = '';
+    if (d.big) h += '<div class="xb" style="font-size:22px;line-height:1.1">' + amt(esc(d.big)) + '</div>';
+    if (d.sub) h += '<div class="s12 muted" style="margin:2px 0 6px">' + esc(d.sub) + '</div>';
+    return h + '<div class="chartbox">' + drawChart(d) + '</div>';
+  }
+  function drawChart(d) {
+    const W = 300, H = 150, pad = 22, bot = 18;
+    const short = (v) => (v >= 100000 ? (v / 100000).toFixed(1).replace(/\.0$/, '') + 'L' : v >= 1000 ? (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(Math.round(v)));
+    const ink = '#1B1B1F', grid = '#E7E6EE', mute = '#8A8996';
+    if (d.kind === 'lines') {
+      const all = d.series.flatMap((s) => s.values.filter((v) => v != null)); const mx = Math.max(1, ...all); const n = d.x.length;
+      const X = (i) => pad + (i / Math.max(1, n - 1)) * (W - pad - 6); const Y = (v) => 8 + (1 - v / mx) * (H - bot - 8);
+      let g = '<line x1="' + pad + '" y1="' + Y(mx) + '" x2="' + W + '" y2="' + Y(mx) + '" stroke="' + grid + '"/><line x1="' + pad + '" y1="' + Y(0) + '" x2="' + W + '" y2="' + Y(0) + '" stroke="' + grid + '"/>';
+      g += '<text x="0" y="' + (Y(mx) + 4) + '" font-size="9" fill="' + mute + '">' + short(mx) + '</text>';
+      d.series.forEach((s) => { const pts = s.values.map((v, i) => (v == null ? null : X(i).toFixed(1) + ',' + Y(v).toFixed(1))).filter(Boolean); if (pts.length) g += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + s.color + '" stroke-width="' + (s.color === ink ? 2.6 : 2) + '" stroke-linejoin="round" stroke-linecap="round"/>'; const li = s.values.map((v, i) => (v == null ? -1 : i)).filter((i) => i >= 0).pop(); if (li != null && li >= 0) g += '<circle cx="' + X(li) + '" cy="' + Y(s.values[li]) + '" r="3.5" fill="' + s.color + '"/>'; });
+      [0, Math.floor(n / 2), n - 1].forEach((i) => { g += '<text x="' + X(i) + '" y="' + (H - 4) + '" font-size="9" fill="' + mute + '" text-anchor="middle">' + esc(d.x[i]) + '</text>'; });
+      return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="chart">' + g + '</svg><div class="legend">' + d.series.map((s) => '<span><i style="background:' + s.color + '"></i>' + esc(s.name) + '</span>').join('') + '</div>';
+    }
+    if (d.kind === 'bars') {
+      const n = d.bars.length; const mx = Math.max(1, ...d.bars.map((b) => b.value)); const bw = (W - 8) / n; const step = n > 14 ? Math.ceil(n / 8) : 1;
+      let g = '';
+      d.bars.forEach((b, i) => { const h = Math.max(b.value ? 3 : 1, (b.value / mx) * (H - bot - 16)); const x = 4 + i * bw + bw * 0.15; const y = H - bot - h;
+        g += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + (bw * 0.7).toFixed(1) + '" height="' + h.toFixed(1) + '" rx="' + Math.min(6, bw * 0.3).toFixed(1) + '" fill="' + (b.hi ? ink : '#CDC6F2') + '"/>';
+        if (b.hi && b.value) g += '<text x="' + (x + bw * 0.35) + '" y="' + (y - 4) + '" font-size="9" font-weight="700" fill="' + ink + '" text-anchor="middle">' + short(b.value) + '</text>';
+        if (i % step === 0 || i === n - 1) g += '<text x="' + (x + bw * 0.35) + '" y="' + (H - 4) + '" font-size="9" fill="' + mute + '" text-anchor="middle">' + esc(b.label) + '</text>'; });
+      return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="chart">' + g + '</svg>';
+    }
+    if (d.kind === 'donut') {
+      const tot = d.slices.reduce((a, x) => a + x.value, 0); if (!tot) return '<div class="s13 muted">Nothing logged yet.</div>';
+      let a0 = -Math.PI / 2, g = ''; const R = 52, r = 32, cx = 62, cy = 62;
+      d.slices.forEach((sl) => { const a1 = a0 + (sl.value / tot) * Math.PI * 2; const large = a1 - a0 > Math.PI ? 1 : 0; const p = (ang, rad) => (cx + rad * Math.cos(ang)).toFixed(1) + ' ' + (cy + rad * Math.sin(ang)).toFixed(1);
+        g += d.slices.length === 1 ? '<circle cx="' + cx + '" cy="' + cy + '" r="' + ((R + r) / 2) + '" fill="none" stroke="' + sl.color + '" stroke-width="' + (R - r) + '"/>' : '<path d="M' + p(a0, R) + ' A' + R + ' ' + R + ' 0 ' + large + ' 1 ' + p(a1, R) + ' L' + p(a1, r) + ' A' + r + ' ' + r + ' 0 ' + large + ' 0 ' + p(a0, r) + 'Z" fill="' + sl.color + '"/>'; a0 = a1; });
+      return '<div class="row" style="gap:12px;align-items:center"><svg viewBox="0 0 124 124" width="112" height="112">' + g + '</svg><div class="legend col">' + d.slices.slice(0, 7).map((sl) => '<span><i style="background:' + sl.color + '"></i>' + esc(sl.label) + ' <b>' + amt(fmt(sl.value)) + '</b> <span class="muted">' + Math.round(sl.value / tot * 100) + '%</span></span>').join('') + '</div></div>';
+    }
+    if (d.kind === 'grouped') {
+      const n = d.groups.length; if (!n) return '<div class="s13 muted">Nothing to compare yet.</div>'; const cols = d.colors || ['#C9C8D1', ink];
+      const mx = Math.max(1, ...d.groups.flatMap((g) => [g.a, g.b])); const gw = (W - 8) / n; let g = '';
+      d.groups.forEach((gr, i) => { [gr.a, gr.b].forEach((v, j) => { const h = Math.max(v ? 3 : 1, (v / mx) * (H - bot - 14)); const x = 4 + i * gw + gw * 0.12 + j * gw * 0.38; g += '<rect x="' + x.toFixed(1) + '" y="' + (H - bot - h).toFixed(1) + '" width="' + (gw * 0.34).toFixed(1) + '" height="' + h.toFixed(1) + '" rx="3" fill="' + cols[j] + '"/>'; });
+        const lbl = gr.label.length > 8 ? gr.label.slice(0, 7) + '…' : gr.label; g += '<text x="' + (4 + i * gw + gw / 2) + '" y="' + (H - 4) + '" font-size="8.5" fill="' + mute + '" text-anchor="middle">' + esc(lbl) + '</text>'; });
+      return '<svg viewBox="0 0 ' + W + ' ' + H + '" class="chart">' + g + '</svg><div class="legend">' + (d.legend || []).map((l, j) => '<span><i style="background:' + cols[j] + '"></i>' + esc(l) + '</span>').join('') + '</div>';
+    }
+    if (d.kind === 'hbars') {
+      if (!d.rows.length) return '';
+      const mx = Math.max(1, ...d.rows.map((r) => Math.abs(r.value)));
+      return '<div style="display:flex;flex-direction:column;gap:8px;min-width:230px">' + d.rows.map((r) => { const pct = d.progress ? Math.min(1, r.value / (r.max || 1)) : Math.abs(r.value) / mx;
+        return '<div><div class="qrow between s13"><span class="b">' + esc(r.label) + '</span><span class="muted">' + amt(esc(d.progress ? r.note : fmt(Math.abs(r.value)) + ' · ' + r.note)) + '</span></div><div class="bar" style="margin-top:5px"><i style="width:' + Math.max(3, pct * 100).toFixed(0) + '%;background:' + r.color + '"></i></div></div>'; }).join('') + '</div>';
+    }
+    return '';
   }
 
   function potsGrid() {
@@ -223,6 +285,17 @@
     const goalsSaved = D.goals.reduce((a, x) => a + (x.saved || 0), 0); const goalsT = D.goals.reduce((a, x) => a + (x.target || 0), 0);
     const sinkS = D.sinking.reduce((a, x) => a + (x.saved || 0), 0); const sinkT = D.sinking.reduce((a, x) => a + (x.target || 0), 0);
     const inv = D.investments.reduce((a, x) => a + (x.total || 0), 0); const invM = D.investments.reduce((a, x) => a + (x.amount || 0), 0);
+    const PT = (id, d) => E.titleOf(D, id) || d;
+    const extra = (E.layout(D).pots || []).map((k) => { const gg = D.goals.find((x) => 'goal:' + x.id === k); return gg ? pot('goal:' + gg.id, gg.name, gg.saved || 0, gg.target ? (gg.saved || 0) / gg.target : 0, '#FCE3C4', gg.target ? fmt(gg.target) + ' target' : 'tap to add money') : ''; }).join('');
+    const cards = {
+      'pot:emergency': pot('emergency', PT('pot:emergency', 'Emergency'), D.emergency.saved, ess ? D.emergency.saved / (ess * 6) : 0, '#F9D4DA', ess ? (D.emergency.saved / ess).toFixed(1) + ' of 6 months' : 'type: save 5000 emergency'),
+      'pot:goals': pot(g ? 'goal:' + g.id : 'goals', PT('pot:goals', 'Goals'), goalsSaved, goalsT ? goalsSaved / goalsT : 0, '#CDC6F2', g ? g.name + (g.by ? ' by ' + g.by.slice(5) + '/' + g.by.slice(2, 4) : '') : 'type: goal bike 60000 by june'),
+      'pot:sinking': pot(D.sinking[0] ? 'sink:' + D.sinking[0].id : 'sinking', PT('pot:sinking', 'Sinking funds'), sinkS, sinkT ? sinkS / sinkT : 0, '#E8F7B8', D.sinking[0] ? D.sinking[0].name : 'yearly costs, set aside monthly'),
+      'pot:investments': pot(D.investments[0] ? 'inv:' + D.investments[0].id : 'invest', PT('pot:investments', 'Investments'), inv, invM ? 1 : 0, '#DCEAF4', invM ? fmt(invM) + '/month' : 'type: sip 5000 on 5th'),
+    };
+    const hid = E.layout(D).hidden;
+    return '<div class="pots">' + E.potOrder(D).filter((id) => !hid.includes(id)).map((id) => cards[id]).join('') + extra + '</div>';
+    // eslint-disable-next-line no-unreachable
     return '<div class="pots">' +
       pot('emergency', 'Emergency', D.emergency.saved, ess ? D.emergency.saved / (ess * 6) : 0, '#F9D4DA', ess ? (D.emergency.saved / ess).toFixed(1) + ' of 6 months' : 'type: save 5000 emergency') +
       pot(g ? 'goal:' + g.id : 'goals', 'Goals', goalsSaved, goalsT ? goalsSaved / goalsT : 0, '#CDC6F2', g ? g.name + (g.by ? ' by ' + g.by.slice(5) + '/' + g.by.slice(2, 4) : '') : 'type: goal bike 60000 by june') +
@@ -428,6 +501,8 @@
       row('shortcuts', P.bolt, '#E4E0F7', 'Shortcuts', Object.keys(D.shortcuts).map((k) => '"' + k + '"').join(', ') || 'like "flat" = you, Arjun, Ram') + '</div>';
     h += '<div class="set-sec"><div class="h">COOKIE</div>' + row('reminders', P.bell, '#F9D4DA', 'Reminders', D.reminders.on ? 'Morning at ' + hourLabel(D.reminders.morning) + ', nightly nudge at ' + hourLabel(D.reminders.night) : 'Off') +
       row('chathist', P.msg, '#E4E0F7', 'Chat history', 'Chat opens fresh every day · old chats ' + E.keepLabel(D.chatKeep == null ? 7 : D.chatKeep), val(D.chatKeep < 0 ? 'Forever' : D.chatKeep === 0 ? '1 day' : (D.chatKeep == null ? 7 : D.chatKeep) + ' days')) +
+      row('ai', P.bolt, '#D8F27E', 'Smart mode (Gemini)', D.ai && D.ai.key ? (D.ai.on ? 'On · understands anything you type' : 'Off') : 'Free · makes Cookie understand anything', val(D.ai && D.ai.key ? (D.ai.on ? 'On' : 'Off') : 'Set up')) +
+      tog('theme', D.theme === 'dark', P.eye, '#EEEDF3', 'Dark mode', 'Or just say "dark mode" in the chat') +
       row('payments', P.msg, '#FCE3C4', 'Payment detection', D.sms.enabled ? 'Watching bank SMS for UPI and card payments' : 'Off · catch UPI payments automatically', val(D.sms.enabled ? 'On' : 'Off')) + '</div>';
     h += '<div class="set-sec"><div class="h">PRIVACY</div>' + tog('hideNames', D.hideNames, P.eye, '#EEEDF3', 'Hide names in Ask AI', 'Friends shown as Friend 1, 2') + tog('hideAmounts', D.hideAmounts, P.eye, '#EEEDF3', 'Hide amounts', 'Blur numbers when someone is looking') + '</div>';
     h += '<div class="set-sec"><div class="h">DATA</div>' + row('sync', P.sync, '#DCEAF4', 'Shared sync (Google Sheets)', D.sync.url ? 'Connected' + (D.sync.last ? ' · last ' + timeAgo(D.sync.last) : '') : 'Not set up', val(D.sync.url ? 'On' : 'Off')) +
@@ -539,7 +614,17 @@
       (D.sms.enabled ? '<button class="primary" data-act="sms-scan">Check the last 3 days again</button><button class="danger" data-act="sms-off">Turn off</button>' : '<button class="primary" data-act="sms-on">Turn on</button>') +
       '<div class="s12 muted">If Android says the permission is restricted: open Settings › Apps › Cookie &amp; Milk › ⋮ (top right) › Allow restricted settings, then try again.</div>';
     if (t === 'sync') return head('Shared sync') + '<div class="s13 muted">Shared expenses sync through one Google Sheet that everyone uses. Personal expenses stay on your phone. Setup steps are in the app\'s GitHub page (README).</div><span class="lbl2">Apps Script web app URL</span><input id="sy-url" class="inp" placeholder="https://script.google.com/macros/s/.../exec" value="' + esc(D.sync.url) + '"><span class="lbl2">Secret key</span><input id="sy-key" class="inp" value="' + esc(D.sync.key) + '">' + (ui.syncErr ? '<div class="s12 red">' + esc(ui.syncErr) + '</div>' : '') + '<button class="primary" data-act="sy-save">Save and sync now</button>';
-    if (t === 'backup') return head('Backup &amp; restore') + '<div class="s13 muted">Copy a backup of everything and keep it in a note or email to yourself. Restoring replaces what\'s on this phone.</div><button class="primary" data-act="bk-copy">Copy backup</button><textarea id="bk-text" class="inp" rows="4" placeholder="Paste a backup here to restore"></textarea><button class="btn black" style="align-self:flex-start" data-act="bk-restore">Restore</button>';
+    if (t === 'ai') {
+      const a = D.ai || {};
+      return head('Smart mode') + '<div class="s13">With a free Google Gemini key, Cookie understands anything you type: messy sentences, questions like <b>am I spending more on weekends?</b>, advice and multi-step requests.</div>' +
+        '<div class="card" style="background:#F5F4FA"><span class="b s13">🔒 Privacy</span><div class="s12 muted">Only messages my rules can\'t understand go to Google. Names become PersonA, PersonB; UPI IDs and account numbers are removed; only totals and your last few entries are shared. On Google\'s free tier, Google may use what\'s sent to improve its products. All maths stays on your phone, and every change has Undo.</div></div>' +
+        '<span class="lbl2">1. Get a free key at aistudio.google.com/apikey (sign in, "Create API key", copy it)</span><button class="btn" style="align-self:flex-start" data-act="ai-getkey">Open Google AI Studio</button>' +
+        '<span class="lbl2">2. Paste your key here</span><input id="ai-key" class="inp" placeholder="AIza..." value="' + esc(a.key || '') + '" autocomplete="off">' +
+        (ui.aiMsg ? '<div class="s12 ' + (ui.aiOk ? 'green' : 'red') + '">' + esc(ui.aiMsg) + '</div>' : '') +
+        '<button class="primary" data-act="ai-save">Save and test</button>' +
+        (a.key ? '<button class="set-row" data-act="ai-onoff"><span class="grow"><span class="b s14">Smart mode</span><br><span class="s12 muted">' + (a.model ? 'Using ' + esc(a.model) + (a.used ? ' · ' + a.used + ' questions so far' : '') : 'Model is picked automatically') + '</span></span><span class="toggle ' + (a.on ? 'on' : '') + '"><i></i></span></button><button class="danger" data-act="ai-forget">Remove key</button>' : '');
+    }
+    if (t === 'backup') return head('Backup &amp; restore') + '<div class="s13 muted">' + (D.lastBackup ? 'Last backup: ' + timeAgo(D.lastBackup) + '. ' : '') + 'I save a backup file in Documents/CookieAndMilk every week by myself. Your Gemini key is never included.</div><button class="primary" data-act="bk-share">Back up now (save or share file)</button><button class="btn" style="align-self:flex-start" data-act="bk-copy">Copy backup as text</button><span class="lbl2">Restore from a backup file</span><input id="bk-file" type="file" accept=".json,application/json,text/plain" class="inp"><textarea id="bk-text" class="inp" rows="4" placeholder="Paste a backup here to restore"></textarea><button class="btn black" style="align-self:flex-start" data-act="bk-restore">Restore</button>';
     return head('');
   }
 
@@ -557,11 +642,57 @@
   }
   function handleEffect(eff) {
     if (!eff) return;
+    if (eff.type === 'ai') return runAI(eff.text);
+    if (eff.type === 'sheet') { ui.page = ui.page || null; ui.sheet = { type: eff.sheet }; pushNav(); return; }
+    if (eff.type === 'backup') return doBackup(true);
     if (eff.type === 'enable-sms') enableSms();
     if (eff.type === 'open') { if (eff.view === 'chat' || eff.view === 'overview') ui.view = eff.view; else openPage(eff.view); }
     if (eff.type === 'upi') { const p = D.people.find((x) => same(x.name, eff.person)); if (!p || !p.upi) return toast('Add ' + eff.person + '\'s UPI ID: type "' + norm(eff.person) + ' upi name@bank"'); window.location.href = 'upi://pay?pa=' + encodeURIComponent(p.upi) + '&pn=' + encodeURIComponent(p.name) + '&am=' + Number(eff.amount).toFixed(2) + '&cu=INR&tn=' + encodeURIComponent('Settle up via Cookie & Milk'); }
     if (eff.type === 'whatsapp') { const msg = eff.text || ('Hey ' + eff.person + '! Quick reminder about the ' + fmt(eff.amount) + ' for our shared expenses 🙂'); const full = msg + (D.myUpi ? '\nYou can pay me at ' + D.myUpi : ''); window.open('https://wa.me/?text=' + encodeURIComponent(full), '_blank'); }
   }
+  // ---------- Smart mode (Gemini) ----------
+  async function runAI(text) {
+    const id = 'think-' + Date.now();
+    D.chat.push({ id, ts: Date.now(), day: L.isoDate(new Date()), from: 'ck', text: '', card: { type: 'thinking' } });
+    ui.scroll = true; render();
+    let res = null, err = null;
+    try { res = await Brain.interpret(D, text, Insights); } catch (e) { err = e; }
+    D.chat = D.chat.filter((m) => m.id !== id);
+    if (err) {
+      // Fall back to the built-in rules so nothing is lost
+      E.say(D, '🧠 ' + esc(Brain.errorText(err)));
+      D._noAI = true; try { const r = E.exec(D, L.parse(text, E.ctx(D)), text); handleEffect(r && r.effect); } finally { D._noAI = false; }
+    } else if (res.commands.length && res.confirm) {
+      E.say(D, (res.reply ? esc(res.reply) + '<br>' : '') + '<span class="s13">' + res.commands.map((c, i) => (i + 1) + '. ' + esc(c)).join('<br>') + '</span>', { type: 'ask', options: [{ label: 'Do it', style: 'black', action: { do: 'ai-run', cmds: res.commands } }, { label: 'Cancel', action: { do: 'noop', text: 'OK, nothing changed.' } }] });
+    } else {
+      if (res.reply) E.say(D, esc(res.reply) + (res.commands.length ? '' : '<br><span class="s11 muted">🧠 smart mode</span>'));
+      res.commands.forEach((c) => { const r = E.command(D, c); handleEffect(r && r.effect); });
+      if (!res.reply && !res.commands.length) E.say(D, 'Hmm, I\'m not sure. Could you say it another way?');
+    }
+    ui.scroll = true; afterChange();
+  }
+  // ---------- Backup ----------
+  const Files = Plug.Filesystem;
+  function backupText() { const copy = Object.assign({}, D); delete copy.ai; return JSON.stringify({ app: 'cookie-and-milk', v: 2, at: new Date().toISOString(), data: copy }); }
+  async function doBackup(share) {
+    const name = 'cookie-backup-' + L.isoDate(new Date()) + '.json'; const text = backupText();
+    let saved = false;
+    if (Files && native) { try { await Files.writeFile({ path: 'CookieAndMilk/' + name, data: text, directory: 'DOCUMENTS', encoding: 'utf8', recursive: true }); saved = 'Documents/CookieAndMilk'; } catch (e) { try { await Files.writeFile({ path: name, data: text, directory: 'DATA', encoding: 'utf8' }); saved = 'app storage'; } catch (e2) {} } }
+    D.lastBackup = Date.now(); save();
+    if (share) {
+      let shared = false;
+      if (Files && Plug.Share && native) { try { const u = await Files.writeFile({ path: name, data: text, directory: 'CACHE', encoding: 'utf8' }); await Plug.Share.share({ title: 'Cookie & Milk backup', files: [u.uri], dialogTitle: 'Save your backup' }); shared = true; } catch (e) {} }
+      if (!shared) { try { const C = Plug.Clipboard; if (C) await C.write({ string: text }); else await navigator.clipboard.writeText(text); } catch (e) {} }
+      E.say(D, '💾 Backup done' + (saved ? ', saved in <b>' + saved + '</b>' : '') + (shared ? '. You can also keep a copy in Drive or email.' : '. I copied it too, paste it into a note or email to keep it safe.') + ' Restore any time: <b>restore backup</b>.');
+      ui.scroll = true; afterChange();
+    }
+    return saved;
+  }
+  function autoBackup() { if (native && Files && D.setup === 'done' && Date.now() - (D.lastBackup || 0) > 7 * 864e5) doBackup(false); }
+  function restoreFrom(text) {
+    try { const j = JSON.parse(text); const data = j && j.data ? j.data : j; if (!data || !Array.isArray(data.records)) throw new Error('bad'); const keepAi = D.ai; D = Object.assign(E.blank(), data); D.ai = keepAi || D.ai; ui.sheet = null; E.say(D, '✅ Restored your backup: ' + D.records.length + ' entries.'); afterChange(); return true; } catch (e) { toast('That doesn\'t look like a Cookie backup'); return false; }
+  }
+
   function openPage(v) { ui.page = v; ui.chart.sel = null; pushNav(); render(); const sub = document.querySelector('.sub'); if (sub) sub.scrollTop = 0; }
 
   // Back button
@@ -741,7 +872,7 @@
       case 'pset': { const p = D.people.find((x) => same(x.name, t.dataset.name)); if (p) { p.settle = t.dataset.v || null; afterChange(); } break; }
       case 'sheet': { const s = t.dataset.s; if (ui.sheet) ui.sheet = { type: s, k: t.dataset.k }; else { ui.sheet = { type: s, k: t.dataset.k }; pushNav(); } if (s === 'form') { ui.sheet = null; openRecord(null); } else render(); break; }
       case 'pick-pot': ui.sheet.k = t.dataset.k; render(); break;
-      case 'toggle': { const k = t.dataset.k; if (k === 'reminders.on') D.reminders.on = !D.reminders.on; else D[k] = !D[k]; afterChange(); break; }
+      case 'toggle': { const k = t.dataset.k; if (k === 'reminders.on') D.reminders.on = !D.reminders.on; else if (k === 'theme') D.theme = D.theme === 'dark' ? 'light' : 'dark'; else D[k] = !D[k]; afterChange(); break; }
       // record form
       case 'f-cat': ui.sheet.f.category = t.dataset.c; render(); break;
       case 'f-part': { const f = ui.sheet.f; const p = t.dataset.p; if (same(p, D.me) && f.parts.length === 1) break; f.parts = f.parts.some((x) => same(x, p)) ? f.parts.filter((x) => !same(x, p)) : f.parts.concat([p]); if (!f.parts.some((x) => same(x, f.payer))) f.payer = f.parts[0]; render(); break; }
@@ -770,9 +901,20 @@
       case 'sms-off': D.sms.enabled = false; toast('Payment detection off'); afterChange(); break;
       case 'sms-scan': { const Sms = Plug.SmsCapture; if (!Sms) break; try { const res = await Sms.scanInbox({ since: Date.now() - 3 * 86400000 }); const n = E.addCaptures(D, (res.items || []).slice(0, 10).reverse()); ui.sheet = null; ui.page = null; ui.view = 'chat'; ui.scroll = true; toast(n ? 'Found ' + n + ' new payment' + (n === 1 ? '' : 's') : 'No new payments'); afterChange(); } catch (err) { toast(err.message || 'Could not read messages'); } break; }
       case 'sy-save': D.sync.url = document.getElementById('sy-url').value.trim(); D.sync.key = document.getElementById('sy-key').value.trim(); save(); await sync(true); render(); break;
-      case 'bk-copy': copyText(JSON.stringify({ app: 'cookie-and-milk', v: 2, data: Object.assign({}, D, { chat: D.chat.slice(-200) }) })); break;
+      case 'bk-copy': copyText(JSON.stringify({ app: 'cookie-and-milk', v: 2, data: Object.assign({}, D, { chat: D.chat.slice(-200), ai: undefined }) })); break;
+      case 'bk-share': doBackup(true); popSheet(); break;
+      case 'ai-getkey': window.open('https://aistudio.google.com/apikey', '_blank'); break;
+      case 'ai-save': { const k = (document.getElementById('ai-key').value || '').trim(); if (k.length < 20) { ui.aiMsg = 'That key looks too short.'; ui.aiOk = false; render(); break; }
+        D.ai = Object.assign({}, D.ai, { key: k, on: true, model: '' }); ui.aiMsg = 'Testing…'; ui.aiOk = true; render();
+        Brain.check(D).then((r) => { ui.aiOk = r.ok; ui.aiMsg = r.ok ? '✓ Working! Using ' + r.model + '.' : Brain.errorText({ message: r.error }); save(); render(); }); break; }
+      case 'ai-onoff': D.ai.on = !D.ai.on; afterChange(); break;
+      case 'ai-forget': D.ai = { on: true, key: '', model: '' }; ui.aiMsg = ''; afterChange(); break;
+      case 'unpin': { const lay = E.layout(D); E.snapshot(D, 'unpin'); lay.pins = lay.pins.filter((x) => x.id !== t.dataset.id); lay.order = lay.order.filter((x) => x !== t.dataset.id); afterChange(); toast('Card removed. Say undo to bring it back.'); break; }
       case 'bk-restore': { try { const d = JSON.parse(document.getElementById('bk-text').value); if (!d || d.app !== 'cookie-and-milk' || !d.data) throw new Error(); D = Object.assign(E.blank(), d.data); popSheet(); toast('Restored'); afterChange(); } catch (err) { toast('That doesn\'t look like a Cookie & Milk backup'); } break; }
     }
+  });
+  document.addEventListener('change', (e) => {
+    if (e.target && e.target.id === 'bk-file' && e.target.files && e.target.files[0]) { const fr = new FileReader(); fr.onload = () => { if (restoreFrom(String(fr.result || ''))) popSheet(); }; fr.readAsText(e.target.files[0]); }
   });
   document.addEventListener('input', (e) => {
     const t = e.target;
@@ -793,7 +935,7 @@
   })();
 
   // App comes to the front
-  function wake() { if (D.setup === 'done') { const before = D.chat.length; E.proactive(D); if (D.chat.length !== before) ui.scroll = true; } pullCaptures(); sync(false); save(); render(); scheduleNotifs(); }
+  function wake() { autoBackup(); if (D.setup === 'done') { const before = D.chat.length; E.proactive(D); if (D.chat.length !== before) ui.scroll = true; } pullCaptures(); sync(false); save(); render(); scheduleNotifs(); }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake(); });
   if (Plug.App && Plug.App.addListener) Plug.App.addListener('resume', wake);
   if (LN && LN.addListener) LN.addListener('localNotificationActionPerformed', () => { ui.view = 'chat'; ui.scroll = true; render(); });

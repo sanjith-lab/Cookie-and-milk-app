@@ -13,6 +13,9 @@
     "LocalNotifications": {
       "smallIcon": "ic_stat_cookie",
       "iconColor": "#B6D84E"
+    },
+    "CapacitorHttp": {
+      "enabled": true
     }
   }
 }

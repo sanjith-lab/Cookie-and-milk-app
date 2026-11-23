@@ -1,0 +1,15 @@
+const L=require('../www/logic.js'); global.Logic=L; const E=require('../www/engine.js'); const I=require('../www/insights.js'); const a=require('assert');
+const ctx={people:[{name:'Aravind'}],me:'Sanjith',learned:{}};
+const T=(x)=>L.parse(x,ctx);
+a.strictEqual(T('this month vs last month').type,'chart'); a.strictEqual(T('where did my money go').spec.chart,'categories'); a.strictEqual(T('spending last 6 months').spec.chart,'months');
+a.strictEqual(T('show charts').type,'open'); a.strictEqual(T('safe spend 4000 per month').type,'safe-set');
+a.strictEqual(T('why is my safe to spend 0').type,'explain-safe'); a.strictEqual(T('move recent to the top').op,'move'); a.strictEqual(T('rename savings to investments').op,'rename');
+a.strictEqual(T('change name of health to wellness').type,'cat-rename'); a.strictEqual(T('my name is sanjith s').type,'set-name'); a.strictEqual(T('payday 5th').day,5);
+a.strictEqual(T('make it half').change.factor,0.5);
+const D=E.blank(); E.startSetup(D); ['Sanjith','85000','skip','aravind'].forEach(t=>E.handle(D,t)); D.setup='done';
+E.handle(D,'tea 20, samosa 30, auto 60'); a.strictEqual(E.live(D).filter(r=>r.kind==='expense').length,3);
+E.handle(D,'move recent to the top'); a.strictEqual(E.layout(D).order[0],'recent');
+E.handle(D,'undo'); a.notStrictEqual(E.layout(D).order[0],'recent');
+a.ok(!I.mask('lunch with aravind key AIzaSyABCDEFGHIJKLMNOPQRSTUV', D).match(/aravind|AIza/i));
+D.ai={on:true,key:'x'.repeat(30)}; const r=E.handle(D,'that thing for aravind bike, make it half'); a.strictEqual(r && r.effect && r.effect.type,'ai');
+console.log('smart brain tests passed');

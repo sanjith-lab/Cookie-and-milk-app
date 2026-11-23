@@ -288,6 +288,106 @@
     return { type: 'collect', pays: pays.map((x) => ({ name: x.name, amount: x.amount })) };
   }
 
+
+  // ---------------- Charts, layout, settings, explain, backup, AI ----------------
+  const SECTIONS = {
+    summary: ['spent this month', 'summary', 'spent', 'monthly spend', 'month summary', 'ring', 'top card'],
+    due: ['due soon', 'due', 'dues', 'upcoming', 'bills due'],
+    trip: ['trip', 'trip card'],
+    people: ['people', 'friends', 'you and', 'together'],
+    budgets: ['budgets', 'budget', 'category budgets'],
+    savings: ['savings', 'saving', 'pots', 'savings cards'],
+    week: ['this week', 'week', 'weekly', 'week chart'],
+    recent: ['recent', 'recent history', 'history', 'recent spends', 'latest', 'transactions'],
+    plan: ['plan', 'your plan'],
+    'pot:emergency': ['emergency', 'emergency fund'],
+    'pot:goals': ['goals', 'goal'],
+    'pot:sinking': ['sinking funds', 'sinking fund', 'sinking'],
+    'pot:investments': ['investments', 'investment', 'invest'],
+  };
+  function sectionId(name, ctx) {
+    const n = norm(name).replace(/^(the|my)\s+/, '').replace(/\s+(card|cards|section|box|tile|part)$/, '').trim();
+    if (!n) return null;
+    const titles = (ctx && ctx.layoutTitles) || {};
+    for (const id of Object.keys(titles)) if (norm(titles[id]) === n) return id;
+    for (const [id, names] of Object.entries(SECTIONS)) if (names.includes(n)) return id;
+    const pins = (ctx && ctx.pins) || [];
+    const pin = pins.find((p) => norm(p.title) === n); if (pin) return pin.id;
+    return null;
+  }
+  function parseChart(t, ctx) {
+    const has = /\b(graph|graphs|chart|charts|plot|trend|trends|vs|versus|compare|comparison|visuali[sz]e|breakdown|pie|donut)\b/.test(t) || /\b(spend|spending|spent)\b.*\b(last|past)\s+\d+\s+(months?|weeks?)\b/.test(t) || /\b(spend|spending|spent)\b.*\b(each|every) month\b/.test(t) || /where (did|does|is) (my|all my) money go/.test(t) || /which day/.test(t);
+    if (!has) return null;
+    if (/^(?:open|show|go to|view|see)?\s*(?:my\s+|the\s+|all\s+)?(charts?|graphs?)(\s+page)?$/.test(t)) return null;
+    const words = t.split(/\s+/);
+    let cat = null;
+    for (let i = 0; i < words.length && !cat; i++) { cat = resolveCat(words[i], ctx) || (words[i + 1] ? resolveCat(words[i] + ' ' + words[i + 1], ctx) : null); }
+    if (!cat) { const g = guessCategory(words.filter((w) => !/^(graph|chart|trend|show|me|my|month|months|last|this|vs|versus|compare|spending|spend|spent|on|the|a|of|for|and|week|weeks|year|plot|money|in|out|income|per|day|days|daily)$/.test(w)), ctx.learned, { fuzzy: false }); if (g.cat !== 'Other') cat = g.cat; }
+    const nm = t.match(/(?:last|past)\s+(\d{1,2})\s+months?/); const nw = t.match(/(?:last|past)\s+(\d{1,2})\s+weeks?/);
+    let spec;
+    if (/who owes|owe|balances?|friends|people/.test(t)) spec = { chart: 'people' };
+    else if (/income|money in|earn|salary/.test(t)) spec = { chart: 'income', n: nm ? Number(nm[1]) : 6 };
+    else if (/goal|saving|savings|progress/.test(t)) spec = { chart: 'goals' };
+    else if (/which day|weekday|day of (the )?week|weekend/.test(t)) spec = { chart: 'weekday' };
+    else if (/categor(y|ies)/.test(t) && /(vs|versus|compare|last month)/.test(t)) spec = { chart: 'cat-compare' };
+    else if (/where (did|does|is)|categor|breakdown|pie|donut/.test(t)) spec = { chart: 'categories', per: /last month/.test(t) ? 'last-month' : /this week/.test(t) ? 'week' : /this year|year/.test(t) ? 'year' : 'month' };
+    else if (nw || /weekly|week by week|each week|per week/.test(t)) spec = { chart: 'weeks', n: nw ? Number(nw[1]) : 8 };
+    else if (/daily|each day|day by day|this week/.test(t)) spec = { chart: 'days', per: /this week/.test(t) ? 'week' : 'month' };
+    else if (nm || /each month|monthly|month by month|year/.test(t)) spec = { chart: 'months', n: nm ? Number(nm[1]) : (/year/.test(t) ? 12 : 6), cat };
+    else spec = { chart: 'compare', cat };
+    if (cat && !spec.cat && (spec.chart === 'compare' || spec.chart === 'months')) spec.cat = cat;
+    return { type: 'chart', spec };
+  }
+  function parseSmartCommands(t, ctx) {
+    let m;
+    // AI on demand
+    m = t.match(/^(?:ask ai|ask gemini|gemini|ai|hey cookie)[:,]?\s+(.+)$/); if (m) return { type: 'ai', text: m[1] };
+    m = t.match(/^(?:my\s+)?(?:gemini|ai|api)\s*(?:api\s*)?key\s*(?:is|:)?\s*([A-Za-z0-9_\-]{20,})$/i); if (m) return { type: 'ai-key', key: m[1] };
+    if (/^(turn on|enable|switch on|start using)\s+(ai|gemini|smart mode)$/.test(t)) return { type: 'ai-toggle', on: true };
+    if (/^(turn off|disable|switch off|stop using)\s+(ai|gemini|smart mode)$/.test(t)) return { type: 'ai-toggle', on: false };
+    // Explain
+    if (/^(why|how come|explain|how is|how's|how did you)\b/.test(t) && /safe|₹?0\b|zero|so low|so high/.test(t)) return { type: 'explain-safe' };
+    // Backup
+    if (/^(backup|back up|take (a )?backup|export (my )?data|save (a )?backup)( now| my data| everything)?$/.test(t)) return { type: 'backup' };
+    if (/^(restore|restore (my )?backup|load backup|import backup)$/.test(t)) return { type: 'open-sheet', sheet: 'backup' };
+    if (/(when|last).*(backup|backed up)/.test(t)) return { type: 'backup-when' };
+    // Theme
+    if (/^(?:turn on |enable |switch to |use |go )?dark(?: mode| theme)?(?: on)?$/.test(t) && /dark/.test(t)) return { type: 'theme', dark: true };
+    if (/^(?:turn on |enable |switch to |use |go )?light(?: mode| theme)?$|^(turn off|disable) dark( mode| theme)?$/.test(t)) return { type: 'theme', dark: false };
+    // Settings summary and sheets
+    if (/^(?:show|what are|list|see)?\s*(?:me\s+)?my (?:current\s+|all\s+)?settings\??$|^what are my settings/.test(t)) return { type: 'settings-card' };
+    m = t.match(/^(?:open|show|go to|change|edit|manage)\s+(?:my\s+)?(income|salary|budgets?|bills?|categor(?:y|ies)|people|friends|contacts|shortcuts?|groups|chat history|reminders?|notifications?|payments?|payment detection|sync|sheets? sync|backup|profile|ai|gemini|ai settings)(?:\s+settings|\s+page|\s+screen)?$/);
+    if (m) { const v = m[1]; const sheet = /income|salary/.test(v) ? 'income' : /budget/.test(v) ? 'budgets' : /bill/.test(v) ? 'bills' : /categor/.test(v) ? 'categories' : /people|friends|contacts/.test(v) ? 'people' : /shortcut|group/.test(v) ? 'shortcuts' : /chat/.test(v) ? 'chathist' : /remind|notif/.test(v) ? 'reminders' : /payment/.test(v) ? 'payments' : /sync|sheet/.test(v) ? 'sync' : /backup/.test(v) ? 'backup' : /ai|gemini/.test(v) ? 'ai' : 'profile'; return { type: 'open-sheet', sheet }; }
+    // You
+    m = t.match(/^(?:my name is|call me|change my name to|set my name to|rename me to)\s+([a-z][a-z .'-]{0,30})$/); if (m) return { type: 'set-name', name: titleCase(m[1].trim()) };
+    m = t.match(/\b(?:payday|pay day|salary day|salary date|salary comes|salary credited|i get paid|get salary)\b(?:\s+(?:is|on|to|every|by))*\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b/); if (m && Number(m[1]) >= 1 && Number(m[1]) <= 31) return { type: 'payday', day: Number(m[1]) };
+    // People
+    m = t.match(/^(?:rename|change)\s+([a-z]+)(?:'s name)?\s+to\s+([a-z][a-z .'-]{0,30})$/);
+    if (m && matchPerson(m[1], ctx.people)) return { type: 'person-rename', person: matchPerson(m[1], ctx.people), name: titleCase(m[2].trim()) };
+    // Categories and budgets
+    m = t.match(/^(?:delete|remove|hide)\s+(?:the\s+)?(?:category\s+(.+)|(.+?)\s+category)$/); if (m) { const c = resolveCat((m[1] || m[2]).trim(), ctx); if (c) return { type: 'cat-delete', cat: c }; }
+    m = t.match(/^(?:remove|delete|clear|cancel|no)\s+(?:the\s+|my\s+)?(.+?)\s+budget$/); if (m) { const c = /^(monthly|overall|total)$/.test(m[1]) ? '__all' : resolveCat(m[1], ctx); if (c) return { type: 'budget-remove', cat: c }; }
+    if (/^(turn off|disable|stop|switch off)\s+(payment detection|payment tracking|upi tracking|sms( reading| tracking)?|auto(matic)? tracking|detection)$/.test(t)) return { type: 'sms-off' };
+    // Layout
+    if (/^(reset|restore)\s+(?:the\s+)?(overview|layout|home( screen)?|cards)(\s+to default)?$/.test(t)) return { type: 'layout', op: 'reset' };
+    m = t.match(/^only show\s+(.+)$/); if (m) { const ids = m[1].split(/,|\band\b/).map((x) => sectionId(x, ctx)).filter(Boolean); if (ids.length) return { type: 'layout', op: 'only', ids }; }
+    m = t.match(/^(?:rename|change (?:the )?(?:name|title) of|call|retitle)\s+(?:the\s+)?(.+?)\s+(?:card\s+|section\s+)?(?:to|as)\s+["']?(.+?)["']?$/) || t.match(/^change\s+(?:the\s+)?(.+?)\s+(?:title|name|heading)\s+to\s+["']?(.+?)["']?$/);
+    if (m && sectionId(m[1], ctx)) return { type: 'layout', op: 'rename', id: sectionId(m[1], ctx), title: titleCase(m[2].trim()) };
+    m = t.match(/^(?:move|put|place|bring|shift)\s+(?:the\s+)?(.+?)\s+(?:card\s+|section\s+)?(to the top|to top|on top|at the top|at top|first|up|to the bottom|to bottom|at the bottom|last|down|above|below|under|after|before)\s*(?:the\s+)?(.*)$/);
+    if (m && sectionId(m[1], ctx)) { const where = m[2]; const rel = m[3] ? sectionId(m[3], ctx) : null; const pos = /top|first/.test(where) ? 'top' : /bottom|last/.test(where) ? 'bottom' : where === 'up' ? 'up' : where === 'down' ? 'down' : /above|before/.test(where) ? 'before' : 'after'; if ((pos === 'before' || pos === 'after') && !rel) return null; return { type: 'layout', op: 'move', id: sectionId(m[1], ctx), pos, rel }; }
+    m = t.match(/^swap\s+(?:the\s+)?(.+?)\s+(?:and|with)\s+(?:the\s+)?(.+)$/); if (m && sectionId(m[1], ctx) && sectionId(m[2], ctx)) return { type: 'layout', op: 'swap', a: sectionId(m[1], ctx), b: sectionId(m[2], ctx) };
+    m = t.match(/^(hide|remove|delete|show|unhide|bring back)\s+(?:the\s+)?(.+?)$/); if (m && sectionId(m[2], ctx)) return { type: 'layout', op: /^(show|unhide|bring back)$/.test(m[1]) ? 'show' : 'hide', id: sectionId(m[2], ctx) };
+    m = t.match(/^show\s+(\d{1,2})\s+(?:recent|items|entries)(?:\s+in recent)?$|^(?:show\s+)?recent\s+(?:as\s+)?(\d{1,2})(?:\s+items)?$/); if (m) return { type: 'layout', op: 'recent-n', n: Number(m[1] || m[2]) };
+    if (/^(pin|save|add) (this|it|that)( chart| graph)?( to (the )?(overview|home))?$/.test(t)) return { type: 'layout', op: 'pin-last' };
+    m = t.match(/^(?:pin|add)\s+(?:a\s+|the\s+)?(?:card|graph|chart)?\s*(?:for|showing|with|of|that shows)?\s*(.+?)\s+(?:to|on)\s+(?:the\s+)?(?:overview|home)$/) || t.match(/^add\s+(?:a\s+)?card\s+(?:for|showing|with|that shows|of)\s+(.+)$/);
+    if (m) return { type: 'layout', op: 'pin', what: m[1] };
+    m = t.match(/^add\s+(?:a\s+)?(?:savings\s+)?(?:card|pot|goal)\s+(?:called|named|for)?\s*([a-z][a-z ]*?)(?:\s*,?\s*(?:target|of|for|worth)?\s*(\d+))?$/);
+    if (m && !/^(showing|with|for|that)/.test(m[1])) return { type: 'layout', op: 'add-pot', name: titleCase(m[1].trim()), target: m[2] ? Number(m[2]) : 0 };
+    // Charts
+    const ch = parseChart(t, ctx); if (ch) return ch;
+    return null;
+  }
+
   // ---------------- The message parser ----------------
   // ctx = { me, people:[{name}], shortcuts:{flat:[names]}, bills:[{id,name,amount}], goals:[{name}], sinking:[{name}], learned:{}, autoSplit:{cat:[names]}, today: Date }
   function parse(raw, ctx) {
@@ -305,6 +405,9 @@
     if (/^(hi|hello|hey|hii+|yo|good (morning|evening|night|afternoon))\b/.test(t) && !/\d/.test(t)) return { type: 'greet' };
 
 
+
+    const smart = parseSmartCommands(t, ctx);
+    if (smart) return smart;
 
     // ---------- Navigation & toggles ----------
     m = t.match(/^(?:please\s+)?(?:open|go to|goto|show|show me|take me to|view|see)?\s*(?:the\s+|my\s+)?(settings?|account|profile|overview|charts?|graphs?|insights|reports?|history|payment history|transactions|savings|savings page)(?:\s+page|\s+screen|\s+tab)?$/);
@@ -365,7 +468,8 @@
       const ch = {};
       const num = v.match(/^(?:rs\s*)?(\d+(?:\.\d+)?)$/) || v.match(/^(?:rs\s*)?(\d+(?:\.\d+)?)\s+(?:rupees|rs)?$/);
       if (num) ch.amount = Number(num[1]);
-      const c = resolveCat(v.replace(/^(?:a|an|in|under|category)\s+/, ''), ctx);
+      if (/^(half|50%|half of it)$/.test(v)) ch.factor = 0.5; if (/^(double|twice|2x)$/.test(v)) ch.factor = 2; if (/^(triple|3x)$/.test(v)) ch.factor = 3;
+      const c = ch.factor ? null : resolveCat(v.replace(/^(?:a|an|in|under|category)\s+/, ''), ctx);
       if (c) ch.cat = c;
       if (/^yesterday$/.test(v)) { const d = new Date(today); d.setDate(d.getDate() - 1); ch.date = isoDate(d); }
       if (/^today$/.test(v)) ch.date = isoDate(today);
@@ -374,8 +478,11 @@
       if (/^(?:just me|only me|mine|personal)$/.test(v)) ch.justMe = true;
       const ren = m[0].match(/^(?:rename|change)\s+(?:it|that|last(?:\s+one)?)\s+to\s+([a-z].+)$/);
       if (!Object.keys(ch).length && /^[a-z][a-z '&]{1,30}$/.test(v)) ch.note = titleCase(v);
+      if (ch.factor) delete ch.note;
       if (Object.keys(ch).length) return { type: 'edit-last', change: ch };
     }
+    m = t.match(/^(?:split|share|divide)\s+(?:it|that|this|the\s+last(?:\s+one)?|last(?:\s+one)?)\s+with\s+([a-z]+)$/);
+    if (m && people.find((x) => norm(x.name) === m[1] || norm(x.name).split(' ')[0] === m[1])) return { type: 'edit-last', change: { splitWith: people.find((x) => norm(x.name) === m[1] || norm(x.name).split(' ')[0] === m[1]).name } };
     m = t.match(/^rename\s+(?:it|that|last(?:\s+one)?|the\s+last(?:\s+one)?)\s+(?:to|as)\s+(.+)$/);
     if (m) return { type: 'edit-last', change: { note: titleCase(m[1]) } };
 
@@ -978,7 +1085,7 @@
   const api = {
     CATS, FIXED, FAMILY_WORDS, RECURRING_WORDS, KEYWORDS, MONTHS,
     norm, same, round2, isoDate, monthKey, parseISO, daysInMonth, catOf, titleCase, cleanText,
-    parse, parseExpense, resolveCat, guessCategory, matchPerson, parseDue, equalShares,
+    parse, parseExpense, parseChart, sectionId, SECTIONS, resolveCat, guessCategory, matchPerson, parseDue, equalShares,
     shareOf, participants, involves, isShared, mySpendOf, mySpend, balanceWith, loanOutstanding, loansWith, togetherStats,
     billAmountFor, billsThisMonth, safeToSpend, essentialsMonthly, savingsPlanMonthly, goalMonthly, daySeries, weekStart, repeatSpends,
     parseBankSms, guessPayment, formatINR, shortINR,
