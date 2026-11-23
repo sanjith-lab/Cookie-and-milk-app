@@ -36,10 +36,20 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     const m = String(text).match(/\{[\s\S]*\}/); if (!m) return null;
     try { return JSON.parse(m[0]); } catch (e) { return null; }
   }
+  let RELAY = '';
+  // Through the user's own Apps Script on script.google.com (for networks that block Google's AI host)
+  async function viaRelay(url, body, key) {
+    const path = url.replace(API + '/', '');
+    const res = await fetch(RELAY, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ path, body: body || null, apiKey: key }) });
+    const txt = await res.text(); let j = null; try { j = JSON.parse(txt); } catch (e) {}
+    if (!j || typeof j.status !== 'number') { const e = new Error('relay'); e.detail = res.ok ? 'The relay URL didn\'t answer like Cookie\'s relay script. Check you deployed it as a Web app with access: Anyone.' : 'Relay HTTP ' + res.status; throw e; }
+    let json = null; try { json = JSON.parse(j.body); } catch (e) {}
+    return { ok: j.status >= 200 && j.status < 300, status: j.status, json, txt: j.body };
+  }
   // Retry short network blips (DNS hiccups, switching between Wi-Fi and mobile data)
   async function http(url, body, key) {
     for (let i = 0; ; i++) {
-      try { return await http1(url, body, key); }
+      try { return RELAY ? await viaRelay(url, body, key) : await http1(url, body, key); }
       catch (e) { const m = String(e && e.message || e); if (i >= 2 || !/resolve host|hostname|Failed to fetch|network|timed? ?out|abort|connection|ECONN|EAI_|Unable to/i.test(m)) throw e; await new Promise((r) => setTimeout(r, 1200 * (i + 1))); }
     }
   }
@@ -65,11 +75,12 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
       const score = (n) => { const v = n.match(/(\d+(?:\.\d+)?)/); return (v ? Number(v[1]) : 0) * 10 - (/preview/.test(n) ? 5 : 0) + (/latest/.test(n) ? 3 : 0); };
       list.sort((a, b) => score(b) - score(a));
       if (list.length) return { model: list[0], all: list };
-    } catch (e) { /* offline or blocked: fall back */ }
+    } catch (e) { if (RELAY || /resolve host|hostname|Unable to/i.test(String(e && e.message))) throw e; /* otherwise fall back */ }
     return { model: FALLBACK_MODELS[0] };
   }
   async function generate(D, parts, json) {
     const key = D.ai && D.ai.key; if (!key) throw new Error('nokey');
+    RELAY = (D.ai.relay || '').trim();
     if (!D.ai.model) { const p = await pickModel(key); if (p.error === 'key') throw new Error('badkey'); D.ai.model = p.model; }
     const tried = [];
     let model = D.ai.model;
@@ -107,7 +118,9 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
   }
   // Test the key and pick a model
   async function check(D) {
-    const p = await pickModel(D.ai.key);
+    RELAY = (D.ai.relay || '').trim();
+    let p;
+    try { p = await pickModel(D.ai.key); } catch (e) { return { ok: false, error: e.message, detail: e.detail }; }
     if (p.error) return { ok: false, error: 'badkey', detail: p.detail };
     D.ai.model = p.model;
     try { await generate(D, [{ text: 'Reply with {"commands":[],"reply":"ok","confirm":false}' }], true); return { ok: true, model: D.ai.model }; }
@@ -116,9 +129,10 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
   function errorText(e) {
     const m = (e && e.message) || '';
     if (m === 'nokey') return 'Smart mode needs a free Gemini key.';
+    if (m === 'relay') return 'The relay didn\'t work' + (e.detail ? ': ' + e.detail : '.');
     if (m === 'badkey') return 'Google didn\'t accept the key' + (e.detail ? ' (' + e.detail + ')' : '') + '. Copy it again from AI Studio, with no spaces.';
     if (m === 'limit') return 'The free Gemini limit is used up for now. I\'ll be smart again later 🍪';
-    if (/abort|Failed to fetch|Network|network|resolve host|hostname|Unable to|timed? ?out|connection/i.test(m)) return 'I couldn\'t reach Google right now (internet hiccup). Your key is fine, try again in a moment.';
+    if (/abort|Failed to fetch|Network|network|resolve host|hostname|Unable to|timed? ?out|connection/i.test(m)) return RELAY ? 'I couldn\'t reach your relay script. Check your internet and the relay URL.' : 'Your network can\'t reach Google\'s AI server. Add a relay in Settings › Smart mode (step 3) and it will work.';
     return 'My smart brain had a hiccup (' + m + (e.detail ? ', ' + e.detail : '') + '). Try again in a bit.';
   }
   const api = { interpret, check, errorText, extractJSON, SYSTEM };

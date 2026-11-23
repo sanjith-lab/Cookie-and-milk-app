@@ -621,6 +621,7 @@
         '<span class="lbl2">1. Get a free key at aistudio.google.com/apikey (sign in, "Create API key", copy it)</span><button class="btn" style="align-self:flex-start" data-act="ai-getkey">Open Google AI Studio</button>' +
         '<span class="lbl2">2. Paste your key here</span><input id="ai-key" class="inp" placeholder="AIza..." value="' + esc(a.key || '') + '" autocomplete="off">' +
         (ui.aiMsg ? '<div class="s12 ' + (ui.aiOk ? 'green' : 'red') + '">' + esc(ui.aiMsg) + '</div>' : '') +
+        '<span class="lbl2">3. Only if you see "Unable to resolve host": your network blocks Google\'s AI server. Set up the free relay script (5 min, steps on the link below) and paste its URL here</span><input id="ai-relay" class="inp" placeholder="https://script.google.com/macros/s/.../exec" value="' + esc(a.relay || '') + '" autocomplete="off"><button class="btn" style="align-self:flex-start" data-act="ai-relayhelp">Relay setup steps</button>' +
         '<button class="primary" data-act="ai-save">Save and test</button>' +
         (a.key ? '<button class="set-row" data-act="ai-onoff"><span class="grow"><span class="b s14">Smart mode</span><br><span class="s12 muted">' + (a.model ? 'Using ' + esc(a.model) + (a.used ? ' · ' + a.used + ' questions so far' : '') : 'Model is picked automatically') + '</span></span><span class="toggle ' + (a.on ? 'on' : '') + '"><i></i></span></button><button class="danger" data-act="ai-forget">Remove key</button>' : '');
     }
@@ -904,8 +905,11 @@
       case 'bk-copy': copyText(JSON.stringify({ app: 'cookie-and-milk', v: 2, data: Object.assign({}, D, { chat: D.chat.slice(-200), ai: undefined }) })); break;
       case 'bk-share': doBackup(true); popSheet(); break;
       case 'ai-getkey': window.open('https://aistudio.google.com/apikey', '_blank'); break;
+      case 'ai-relayhelp': window.open('https://github.com/sanjith-lab/Cookie-and-milk-app/blob/main/apps-script/CookieBrainRelay.gs', '_blank'); break;
       case 'ai-save': { const k = (document.getElementById('ai-key').value || '').replace(/\s+/g, '').replace(/^["']|["']$/g, ''); if (k.length < 20) { ui.aiMsg = 'That key looks too short.'; ui.aiOk = false; render(); break; }
-        D.ai = Object.assign({}, D.ai, { key: k, on: true, model: '' }); ui.aiMsg = 'Testing…'; ui.aiOk = true; render();
+        const rl = ((document.getElementById('ai-relay') || {}).value || '').trim();
+        if (rl && !/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(rl)) { ui.aiMsg = 'The relay URL should start with https://script.google.com/macros/s/'; ui.aiOk = false; render(); break; }
+        D.ai = Object.assign({}, D.ai, { key: k, relay: rl, on: true, model: '' }); ui.aiMsg = 'Testing…'; ui.aiOk = true; render();
         Brain.check(D).then((r) => { ui.aiOk = r.ok; ui.aiMsg = r.ok ? '✓ Working! Using ' + r.model + '.' : Brain.errorText({ message: r.error, detail: r.detail }); save(); render(); }); break; }
       case 'ai-onoff': D.ai.on = !D.ai.on; afterChange(); break;
       case 'ai-forget': D.ai = { on: true, key: '', model: '' }; ui.aiMsg = ''; afterChange(); break;
