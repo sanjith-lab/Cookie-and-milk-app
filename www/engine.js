@@ -99,6 +99,25 @@
     const myShare = L.shareOf(r, me);
     return myShare ? 'you owe ' + r.paidBy + ' ' + fmt(myShare) : r.paidBy + ' covered it';
   }
+  // Per-person breakdown for splits with 3+ people (or custom amounts)
+  function splitRows(D, r) {
+    if (r.kind !== 'expense' || r.split === 'treat') return null;
+    const names = Object.keys(r.shares || {});
+    if (names.length < 3) return null;
+    const payer = r.paidBy || D.me;
+    const you = (n) => (same(n, D.me) ? 'You' : n);
+    const rows = names.map((n) => {
+      const sh = L.shareOf(r, n);
+      if (same(n, payer)) return { name: you(n), share: sh, note: (same(n, D.me) ? 'paid ' : 'paid ') + fmt(r.amount) + (sh ? ', share ' + fmt(sh) : ''), kind: 'paid' };
+      if (!sh) return null;
+      return { name: you(n), share: sh, note: (same(n, D.me) ? 'owe ' : 'owes ') + (same(payer, D.me) ? 'you ' : you(payer) + ' ') + fmt(sh), kind: same(payer, D.me) ? 'owes' : same(n, D.me) ? 'iowe' : 'other' };
+    }).filter(Boolean);
+    rows.sort((a, b) => (a.kind === 'paid' ? -1 : b.kind === 'paid' ? 1 : 0));
+    const back = same(payer, D.me) ? rows.filter((x) => x.kind === 'owes').reduce((a, x) => a + x.share, 0) : 0;
+    if (back) rows.push({ name: '', note: 'You get back ' + fmt(back), kind: 'total' });
+    return rows;
+  }
+  function shortLine(D, r) { return (r.note || r.category) + ' ' + fmt(r.amount) + ' · ' + r.category + ' · split ' + Object.keys(r.shares).length + ' ways'; }
   function recLine(D, r) {
     if (r.kind === 'expense') return (r.note || r.category) + ' ' + fmt(r.amount) + ' · ' + r.category + ' · ' + splitText(D, r) + (r.method === 'card' ? ' · card' : r.method === 'cash' ? ' · cash' : '');
     if (r.kind === 'loan') return (same(r.lender, D.me) ? 'Lent ' + fmt(r.amount) + ' to ' + r.borrower : 'Borrowed ' + fmt(r.amount) + ' from ' + r.lender) + (r.due ? ' · return by ' + niceDate(r.due) : '');
@@ -259,7 +278,11 @@
       kind: 'expense', amount: it.amount, category: it.cat, note: it.note, paidBy: it.payer, shares: it.shares, split: it.split,
       method: it.method || null, claim: it.claim || undefined, claimStatus: it.claim ? 'pending' : undefined, date: it.date || todayISO(),
     });
-    const card = confirmCard(D, r.id, recLine(D, r) + (dup ? ' · added again' : ''), { pickCat: it.cat === 'Other' });
+    const added = (it.newPeople || []).filter((n) => !same(n, D.me) && !people(D).some((p) => same(p.name, n)));
+    added.forEach((n) => D.people.push({ name: n, upi: '' }));
+    const rows = splitRows(D, r);
+    const card = confirmCard(D, r.id, (rows ? shortLine(D, r) : recLine(D, r)) + (dup ? ' · added again' : ''), { pickCat: it.cat === 'Other', rows });
+    if (added.length) say(D, '👋 New ' + (added.length === 1 ? 'friend' : 'friends') + ' added: <b>' + added.map(esc).join(', ') + '</b>. Say <b>who owes me</b> anytime to see what everyone owes.');
     afterExpense(D, r, it);
     return card;
   }
@@ -683,7 +706,7 @@
     if (ch.splitWith) { r.shares = L.equalShares(r.amount, [D.me, ch.splitWith], r.paidBy, ctx(D).ratios); r.split = 'equal'; }
     if (ch.justMe) { r.shares = { [D.me]: r.amount }; r.paidBy = D.me; r.split = 'equal'; }
     touch(r);
-    D.chat.forEach((m) => { if (m.card && m.card.type === 'confirm' && m.card.recId === r.id) { m.card.text = recLine(D, r); m.card.pickCat = false; } });
+    D.chat.forEach((m) => { if (m.card && m.card.type === 'confirm' && m.card.recId === r.id) { m.card.rows = splitRows(D, r); m.card.text = m.card.rows ? shortLine(D, r) : recLine(D, r); m.card.pickCat = false; } });
     return say(D, '✏️ Changed. Now: <b>' + esc(recLine(D, r)) + '</b>', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
   }
   function listEntries(D, t) {

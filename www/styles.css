@@ -139,3 +139,11 @@ input, select, textarea { font-size: 16px; }
 body.kb-open .composer { bottom: calc(8px + var(--kb)); }
 
 .composer .plus svg { width: 18px; height: 18px; } .composer .mic svg { width: 24px; height: 24px; }
+
+/* per-person split breakdown on a confirm card */
+.conf .split-rows{display:flex;flex-direction:column;gap:4px;margin:8px 0 2px;padding:8px 10px;background:rgba(255,255,255,.6);border-radius:14px;font-size:13px}
+.conf .split-rows .sr{display:flex;justify-content:space-between;gap:12px}
+.conf .split-rows .sr.paid b{color:#3d5a00}
+.conf .split-rows .sr.owes span{color:#2f6b00;font-weight:600}
+.conf .split-rows .sr.iowe span{color:#b3261e;font-weight:600}
+.conf .split-rows .sr.total{border-top:1px dashed rgba(0,0,0,.15);padding-top:4px;justify-content:flex-end;font-weight:700}

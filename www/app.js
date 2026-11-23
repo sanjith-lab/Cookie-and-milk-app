@@ -120,6 +120,7 @@
       const r = D.records.find((x) => x.id === c.recId);
       if (!r && !c.undone) return '';
       let h = '<div class="conf"><div class="c' + (c.paid ? ' paid' : '') + (c.undone || (r && r.deleted) ? ' undone' : '') + '"><span>' + svg(P.check, 2.6, 'width="12" height="12" style="vertical-align:-1px;margin-right:4px"') + amt(c.text) + '</span>';
+      if (c.rows && c.rows.length && !c.undone && r && !r.deleted) h += '<span class="split-rows">' + c.rows.map((x) => '<span class="sr ' + x.kind + '"><b>' + esc(x.name) + '</b><span>' + amt(esc(x.note)) + '</span></span>').join('') + '</span>';
       if (!c.undone && r && !r.deleted) {
         h += '<span class="acts"><button class="mini" data-act="edit" data-id="' + esc(r.id) + '">Edit</button><button class="mini" data-act="undo-rec" data-id="' + esc(r.id) + '">Undo</button></span>';
         if (c.pickCat && !c.showCats) h += '<span class="acts"><button class="mini" data-act="show-cats" data-msg="' + m.id + '">Pick category ▾</button></span>';

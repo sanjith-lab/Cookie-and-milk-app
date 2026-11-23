@@ -496,7 +496,7 @@
   }
 
   function parseExpense(text, ctx, today) {
-    const people = ctx.people || [];
+    const people = (ctx.people || []).slice();
     let t = norm(text);
     const flags = {};
     if (/\bmy treat\b|\btreated\b|\bon me\b/.test(t)) { flags.treat = 'me'; t = t.replace(/\bmy treat\b|\btreated\b|\bon me\b/g, ' '); }
@@ -509,6 +509,19 @@
 
     // "<name> treat"
     const words = t.replace(/[,;:!?]/g, ' ').split(/\s+/).filter(Boolean);
+    // New names: "lunch aravind 50 subanu 50 me 30" or "lunch 200 with aravind and subanu"
+    const isNum = (w) => /^\d+(\.\d+)?$/.test(w || '');
+    const nameLike = (w) => /^[a-z]{2,}$/.test(w || '') && !isMeWord(w) && !FILLER.has(w) && !matchPerson(w, people) && !(ctx.shortcuts && ctx.shortcuts[w]) &&
+      !/^(paid|treat|split|each|and|with|between|by|he|she|they|him|her|we|us|k|rs|today|yesterday|lunch|dinner|breakfast)$/.test(w) && guessCategory([w], ctx.learned).cat === 'Other';
+    const newPeople = [];
+    const pairs = words.map((w, i) => (/^[a-z]+$/.test(w) && isNum(words[i + 1]) ? i : -1)).filter((i) => i >= 0);
+    const mePair = pairs.some((i) => isMeWord(words[i]));
+    const knownPairs = pairs.filter((i) => matchPerson(words[i], people)).length;
+    const cand = pairs.filter((i) => nameLike(words[i]));
+    if (cand.length && (mePair || knownPairs || cand.length >= 2)) cand.forEach((i) => { if (!newPeople.includes(words[i])) newPeople.push(words[i]); });
+    const wi = words.findIndex((w) => w === 'with' || w === 'between');
+    if (wi >= 0) for (let j = wi + 1; j < words.length && !isNum(words[j]); j++) { if (words[j] === 'and' || words[j] === '&') continue; if (nameLike(words[j])) { if (!newPeople.includes(words[j])) newPeople.push(words[j]); } else break; }
+    newPeople.forEach((n) => people.push({ name: titleCase(n), isNew: true }));
     let payer = null;
     const named = []; // people mentioned (not me)
     let meMentioned = false;
@@ -533,7 +546,8 @@
       }
       if (sc) { sc.forEach((n) => { if (!named.includes(n)) named.push(n); }); meMentioned = true; continue; }
       if (w === 'paid' && words[i + 1] === 'by' && matchPerson(words[i + 2], people)) { payer = matchPerson(words[i + 2], people); if (!named.includes(payer)) named.push(payer); i += 2; continue; }
-      if (w === 'and' || w === '&' || w === 'with' || w === 'between') continue;
+      if (w === 'with' || w === 'between') { meMentioned = true; continue; }
+      if (w === 'and' || w === '&') continue;
       noteWords.push(w);
     }
     const customKeys = Object.keys(customShares);
@@ -587,7 +601,7 @@
     return {
       type: 'expense', amount, note, cat, catGuessed: g.cat === 'Other' && !g.learned, learnedCat: !!g.learned,
       payer, participants, shares, split, method: method ? (/card/.test(method) ? 'card' : method === 'cash' ? 'cash' : 'upi') : null,
-      claim: !!flags.claim, date: flags.date || null, keyWords: cleanNote,
+      claim: !!flags.claim, date: flags.date || null, keyWords: cleanNote, newPeople: newPeople.map(titleCase),
     };
   }
 
