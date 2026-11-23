@@ -36,7 +36,14 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     const m = String(text).match(/\{[\s\S]*\}/); if (!m) return null;
     try { return JSON.parse(m[0]); } catch (e) { return null; }
   }
+  // Retry short network blips (DNS hiccups, switching between Wi-Fi and mobile data)
   async function http(url, body, key) {
+    for (let i = 0; ; i++) {
+      try { return await http1(url, body, key); }
+      catch (e) { const m = String(e && e.message || e); if (i >= 2 || !/resolve host|hostname|Failed to fetch|network|timed? ?out|abort|connection|ECONN|EAI_|Unable to/i.test(m)) throw e; await new Promise((r) => setTimeout(r, 1200 * (i + 1))); }
+    }
+  }
+  async function http1(url, body, key) {
     const headers = { 'x-goog-api-key': key };
     if (body) headers['Content-Type'] = 'application/json';
     const opts = body ? { method: 'POST', headers, body: JSON.stringify(body) } : { method: 'GET', headers };
@@ -111,7 +118,7 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     if (m === 'nokey') return 'Smart mode needs a free Gemini key.';
     if (m === 'badkey') return 'Google didn\'t accept the key' + (e.detail ? ' (' + e.detail + ')' : '') + '. Copy it again from AI Studio, with no spaces.';
     if (m === 'limit') return 'The free Gemini limit is used up for now. I\'ll be smart again later 🍪';
-    if (/abort|Failed to fetch|Network|network/i.test(m)) return 'I need internet for that one.';
+    if (/abort|Failed to fetch|Network|network|resolve host|hostname|Unable to|timed? ?out|connection/i.test(m)) return 'I couldn\'t reach Google right now (internet hiccup). Your key is fine, try again in a moment.';
     return 'My smart brain had a hiccup (' + m + (e.detail ? ', ' + e.detail : '') + '). Try again in a bit.';
   }
   const api = { interpret, check, errorText, extractJSON, SYSTEM };
