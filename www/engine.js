@@ -161,7 +161,7 @@
       D.pending = null;
     }
     // A pasted Gemini key (keep its exact letters)
-    const km = text.match(/^(?:my\s+)?(?:gemini|ai|api)\s*(?:api\s*)?key\s*(?:is|:)?\s*([A-Za-z0-9_\-]{20,})\s*$/i) || text.match(/^\s*(AIza[A-Za-z0-9_\-]{20,})\s*$/);
+    const km = text.match(/^(?:my\s+)?(?:gemini|ai|api)\s*(?:api\s*)?key\s*(?:is|:)?\s*([A-Za-z0-9_.\-]{20,})\s*$/i) || text.match(/^\s*((?:AIza|AQ\.)[A-Za-z0-9_.\-]{20,})\s*$/);
     if (km) { const mm = D.chat[D.chat.length - 1]; if (mm && mm.from === 'me') mm.text = '🔑 Gemini key (hidden)'; return exec(D, { type: 'ai-key', key: km[1] }, ''); }
     // Several spends in one message: "tea 20, samosa 30, auto 60"
     const multi = multiItems(D, text);

@@ -904,9 +904,9 @@
       case 'bk-copy': copyText(JSON.stringify({ app: 'cookie-and-milk', v: 2, data: Object.assign({}, D, { chat: D.chat.slice(-200), ai: undefined }) })); break;
       case 'bk-share': doBackup(true); popSheet(); break;
       case 'ai-getkey': window.open('https://aistudio.google.com/apikey', '_blank'); break;
-      case 'ai-save': { const k = (document.getElementById('ai-key').value || '').trim(); if (k.length < 20) { ui.aiMsg = 'That key looks too short.'; ui.aiOk = false; render(); break; }
+      case 'ai-save': { const k = (document.getElementById('ai-key').value || '').replace(/\s+/g, '').replace(/^["']|["']$/g, ''); if (k.length < 20) { ui.aiMsg = 'That key looks too short.'; ui.aiOk = false; render(); break; }
         D.ai = Object.assign({}, D.ai, { key: k, on: true, model: '' }); ui.aiMsg = 'Testing…'; ui.aiOk = true; render();
-        Brain.check(D).then((r) => { ui.aiOk = r.ok; ui.aiMsg = r.ok ? '✓ Working! Using ' + r.model + '.' : Brain.errorText({ message: r.error }); save(); render(); }); break; }
+        Brain.check(D).then((r) => { ui.aiOk = r.ok; ui.aiMsg = r.ok ? '✓ Working! Using ' + r.model + '.' : Brain.errorText({ message: r.error, detail: r.detail }); save(); render(); }); break; }
       case 'ai-onoff': D.ai.on = !D.ai.on; afterChange(); break;
       case 'ai-forget': D.ai = { on: true, key: '', model: '' }; ui.aiMsg = ''; afterChange(); break;
       case 'unpin': { const lay = E.layout(D); E.snapshot(D, 'unpin'); lay.pins = lay.pins.filter((x) => x.id !== t.dataset.id); lay.order = lay.order.filter((x) => x !== t.dataset.id); afterChange(); toast('Card removed. Say undo to bring it back.'); break; }

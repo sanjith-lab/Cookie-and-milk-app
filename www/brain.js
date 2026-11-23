@@ -36,8 +36,10 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     const m = String(text).match(/\{[\s\S]*\}/); if (!m) return null;
     try { return JSON.parse(m[0]); } catch (e) { return null; }
   }
-  async function http(url, body) {
-    const opts = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { method: 'GET' };
+  async function http(url, body, key) {
+    const headers = { 'x-goog-api-key': key };
+    if (body) headers['Content-Type'] = 'application/json';
+    const opts = body ? { method: 'POST', headers, body: JSON.stringify(body) } : { method: 'GET', headers };
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const t = setTimeout(() => ctrl && ctrl.abort(), 30000);
     try {
@@ -49,8 +51,8 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
   // Pick the best free "flash" model available to this key
   async function pickModel(key) {
     try {
-      const r = await http(API + '/models?pageSize=200&key=' + encodeURIComponent(key));
-      if (r.status === 400 || r.status === 403) return { error: 'key' };
+      const r = await http(API + '/models?pageSize=200', null, key);
+      if (r.status === 400 || r.status === 401 || r.status === 403) return { error: 'key', detail: googleMsg(r) };
       const list = (r.json && r.json.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => m.name.replace(/^models\//, ''))
         .filter((n) => /flash/.test(n) && !/(image|tts|live|audio|vision|thinking|exp|embedding|transcribe|omni|lite)/.test(n));
       const score = (n) => { const v = n.match(/(\d+(?:\.\d+)?)/); return (v ? Number(v[1]) : 0) * 10 - (/preview/.test(n) ? 5 : 0) + (/latest/.test(n) ? 3 : 0); };
@@ -66,8 +68,8 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     let model = D.ai.model;
     for (let attempt = 0; attempt < 3; attempt++) {
       tried.push(model);
-      const body = { systemInstruction: { parts: [{ text: SYSTEM }] }, contents: [{ role: 'user', parts }], generationConfig: Object.assign({ temperature: 0.2, maxOutputTokens: 1024 }, json ? { responseMimeType: 'application/json' } : {}) };
-      const r = await http(API + '/models/' + model + ':generateContent?key=' + encodeURIComponent(key), body);
+      const body = { systemInstruction: { parts: [{ text: SYSTEM }] }, contents: [{ role: 'user', parts }], generationConfig: Object.assign({ temperature: 0.2, maxOutputTokens: 4096 }, json ? { responseMimeType: 'application/json' } : {}) };
+      const r = await http(API + '/models/' + model + ':generateContent', body, key);
       if (r.ok) {
         const c = r.json && r.json.candidates && r.json.candidates[0];
         const text = c && c.content && c.content.parts ? c.content.parts.map((p) => p.text || '').join('') : '';
@@ -75,13 +77,13 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
         return text;
       }
       if (r.status === 429) throw new Error('limit');
-      if (r.status === 400 && /API key|API_KEY/i.test(r.txt)) throw new Error('badkey');
-      if (r.status === 403) throw new Error('badkey');
+      if (r.status === 401 || r.status === 403 || (r.status === 400 && /API key|API_KEY|credential/i.test(r.txt))) { const e = new Error('badkey'); e.detail = googleMsg(r); throw e; }
       if (r.status === 404 || r.status === 400) { model = FALLBACK_MODELS.find((m) => !tried.includes(m)); if (!model) break; continue; }
-      throw new Error('http' + r.status);
+      { const e = new Error('http' + r.status); e.detail = googleMsg(r); throw e; }
     }
     throw new Error('model');
   }
+  function googleMsg(r) { const e = r && r.json && r.json.error; return e ? (e.status ? e.status + ': ' : '') + String(e.message || '').slice(0, 160) : 'HTTP ' + (r && r.status); }
   function history(D, I, n) {
     return D.chat.slice(-n - 1, -1).map((m) => (m.from === 'me' ? 'User: ' : 'Cookie: ') + I.mask(String(m.text || (m.card && (m.card.title || (m.card.data && m.card.data.title))) || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), D).slice(0, 220)).filter((x) => x.length > 8).join('\n');
   }
@@ -97,14 +99,20 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     return j;
   }
   // Test the key and pick a model
-  async function check(D) { const p = await pickModel(D.ai.key); if (p.error) return { ok: false, error: p.error }; D.ai.model = p.model; try { await generate(D, [{ text: 'Reply with {"commands":[],"reply":"ok","confirm":false}' }], true); return { ok: true, model: D.ai.model }; } catch (e) { return { ok: false, error: e.message }; } }
+  async function check(D) {
+    const p = await pickModel(D.ai.key);
+    if (p.error) return { ok: false, error: 'badkey', detail: p.detail };
+    D.ai.model = p.model;
+    try { await generate(D, [{ text: 'Reply with {"commands":[],"reply":"ok","confirm":false}' }], true); return { ok: true, model: D.ai.model }; }
+    catch (e) { return { ok: false, error: e.message, detail: e.detail }; }
+  }
   function errorText(e) {
     const m = (e && e.message) || '';
     if (m === 'nokey') return 'Smart mode needs a free Gemini key.';
-    if (m === 'badkey') return 'Your Gemini key didn\'t work. Check it in Settings › Smart mode.';
+    if (m === 'badkey') return 'Google didn\'t accept the key' + (e.detail ? ' (' + e.detail + ')' : '') + '. Copy it again from AI Studio, with no spaces.';
     if (m === 'limit') return 'The free Gemini limit is used up for now. I\'ll be smart again later 🍪';
     if (/abort|Failed to fetch|Network|network/i.test(m)) return 'I need internet for that one.';
-    return 'My smart brain had a hiccup (' + m + '). Try again in a bit.';
+    return 'My smart brain had a hiccup (' + m + (e.detail ? ', ' + e.detail : '') + '). Try again in a bit.';
   }
   const api = { interpret, check, errorText, extractJSON, SYSTEM };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Brain = api;
