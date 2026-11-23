@@ -110,11 +110,13 @@
       const sh = L.shareOf(r, n);
       if (same(n, payer)) return { name: you(n), share: sh, note: (same(n, D.me) ? 'paid ' : 'paid ') + fmt(r.amount) + (sh ? ', share ' + fmt(sh) : ''), kind: 'paid' };
       if (!sh) return null;
-      return { name: you(n), share: sh, note: (same(n, D.me) ? 'owe ' : 'owes ') + (same(payer, D.me) ? 'you ' : you(payer) + ' ') + fmt(sh), kind: same(payer, D.me) ? 'owes' : same(n, D.me) ? 'iowe' : 'other' };
+      if (same(payer, D.me)) { const left = Math.min(sh, Math.max(0, netWith(D, n))); return left < 0.5 ? { name: n, share: 0, note: 'paid ✓', kind: 'done' } : { name: n, share: left, note: 'owes you ' + fmt(left), kind: 'owes' }; }
+      return { name: you(n), share: sh, note: (same(n, D.me) ? 'owe ' : 'owes ') + you(payer) + ' ' + fmt(sh), kind: same(n, D.me) ? 'iowe' : 'other' };
     }).filter(Boolean);
     rows.sort((a, b) => (a.kind === 'paid' ? -1 : b.kind === 'paid' ? 1 : 0));
     const back = same(payer, D.me) ? rows.filter((x) => x.kind === 'owes').reduce((a, x) => a + x.share, 0) : 0;
     if (back) rows.push({ name: '', note: 'You get back ' + fmt(back), kind: 'total' });
+    else if (same(payer, D.me) && rows.some((x) => x.kind === 'done')) rows.push({ name: '', note: 'All collected ✓', kind: 'total' });
     return rows;
   }
   function shortLine(D, r) { return (r.note || r.category) + ' ' + fmt(r.amount) + ' · ' + r.category + ' · split ' + Object.keys(r.shares).length + ' ways'; }
@@ -185,6 +187,7 @@
       case 'safe-set': return safeSet(D, it);
       case 'safe-reset': snapshot(D, 'safe spend reset'); D.safeRule = null; D.safeCap = 0;
         return say(D, '✓ Safe to spend is back to automatic: worked out from your ' + (D.income.amount ? 'salary, bills and savings plans' : 'budget') + '.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
+      case 'collect': return collect(D, it);
       case 'chat-keep': return chatKeep(D, it.days);
       case 'chat-clear': D.chatClearedAt = clock().getTime(); return say(D, '🧹 Fresh chat! Everything you logged is still saved.');
       case 'delete': return deleteEntries(D, it);
@@ -738,6 +741,71 @@
     return ask(D, '🤔 I\'m not sure what you mean by "' + esc(t) + '". Did you mean:', o);
   }
 
+
+  // ---------------- Group bill collection ----------------
+  // Net position with a person: positive = they owe me, negative = I owe them
+  function netWith(D, name) { const recs = live(D); const lw = L.loansWith(recs, D.me, name); return round2(L.balanceWith(recs, D.me, name) + lw.lentOut - lw.borrowed); }
+  function groupBill(D, recId, names) {
+    if (recId) { const r = D.records.find((x) => x.id === recId && !x.deleted); if (r) return r; }
+    const idx = new Map(D.records.map((r, i) => [r.id, i]));
+    const list = live(D).filter((r) => r.kind === 'expense' && same(r.paidBy, D.me) && Object.keys(r.shares || {}).filter((n) => !same(n, D.me) && L.shareOf(r, n) > 0).length >= (names ? 1 : 2) && (!names || names.every((n) => L.shareOf(r, n) > 0)));
+    return list.sort((a, b) => (b.createdAt - a.createdAt) || (idx.get(b.id) - idx.get(a.id)))[0] || null;
+  }
+  // Fewest payments so everyone ends even: people who still owe pay people who overpaid directly
+  function directPlan(after) {
+    const owe = after.filter((x) => x.net > 0.5).map((x) => ({ name: x.name, v: x.net })).sort((a, b) => b.v - a.v);
+    const extra = after.filter((x) => x.net < -0.5).map((x) => ({ name: x.name, v: -x.net })).sort((a, b) => b.v - a.v);
+    const plan = [];
+    for (const o of owe) for (const e of extra) { if (o.v < 0.5) break; if (e.v < 0.5) continue; const a = round2(Math.min(o.v, e.v)); plan.push({ from: o.name, to: e.name, amount: a }); o.v = round2(o.v - a); e.v = round2(e.v - a); }
+    return plan;
+  }
+  function collect(D, it) {
+    const bill = groupBill(D, it.recId, it.pays && it.pays.map((x) => x.name));
+    let pays = it.pays;
+    if (it.all) {
+      if (!bill) return say(D, 'Which bill? Log it first, like <b>dinner 2000 with subanu jithin aravind</b> 🍪');
+      pays = Object.keys(bill.shares).filter((n) => !same(n, D.me) && L.shareOf(bill, n) > 0).map((n) => ({ name: n, amount: 'full' }));
+    }
+    pays = pays.map((x) => ({ name: person(D, x.name).name || x.name, amount: x.amount }));
+    const before = {}; pays.forEach((x) => { before[x.name] = netWith(D, x.name); });
+    pays.forEach((x) => { if (x.amount === 'full') x.amount = Math.max(0, before[x.name]); });
+    if (!pays.some((x) => x.amount > 0)) return say(D, 'Looks like nobody owes you anything right now 🎉');
+    snapshot(D, 'collected money');
+    pays.forEach((x) => { if (x.amount > 0) addRecord(D, { kind: 'settlement', amount: round2(x.amount), from: x.name, to: D.me, bill: bill ? bill.id : undefined }); });
+    // Also show bill people who didn't pay anything yet
+    const names = pays.map((x) => x.name);
+    if (bill) Object.keys(bill.shares).forEach((n) => { if (!same(n, D.me) && L.shareOf(bill, n) > 0 && !names.some((y) => same(y, n))) { names.push(n); before[n] = netWith(D, n); pays.push({ name: n, amount: 0 }); } });
+    const after = names.map((n) => ({ name: n, net: netWith(D, n) }));
+    const got = round2(pays.reduce((a, x) => a + (x.amount || 0), 0));
+    const pending = round2(after.filter((x) => x.net > 0).reduce((a, x) => a + x.net, 0));
+    const extraT = round2(after.filter((x) => x.net < 0).reduce((a, x) => a - x.net, 0));
+    const rows = after.map((x) => {
+      const gave = pays.find((y) => same(y.name, x.name)).amount || 0;
+      const share = bill ? L.shareOf(bill, x.name) : 0;
+      const label = x.name + (share ? ' · share ' + fmt(share) : '') + ' · gave ' + fmt(gave);
+      if (Math.abs(x.net) < 0.5) return { label, value: 'settled ✓', tone: 'green' };
+      if (x.net > 0) return { label, value: 'owes ' + fmt(x.net), tone: 'red' };
+      return { label, value: fmt(-x.net) + ' extra', tone: 'amber' };
+    });
+    const plan = directPlan(after);
+    let note = '';
+    const options = [];
+    if (plan.length) {
+      note = '<b>Easiest way to even out:</b><br>' + plan.map((p) => '• ' + esc(p.from) + ' pays ' + esc(p.to) + ' <b>' + fmt(p.amount) + '</b> directly').join('<br>');
+      const left = after.filter((x) => x.net > 0.5).map((x) => ({ name: x.name, v: x.net - plan.filter((p) => p.from === x.name).reduce((a, p) => a + p.amount, 0) })).filter((x) => x.v > 0.5);
+      const ret = after.filter((x) => x.net < -0.5).map((x) => ({ name: x.name, v: -x.net - plan.filter((p) => p.to === x.name).reduce((a, p) => a + p.amount, 0) })).filter((x) => x.v > 0.5);
+      left.forEach((x) => { note += '<br>• ' + esc(x.name) + ' pays you <b>' + fmt(x.v) + '</b>'; });
+      ret.forEach((x) => { note += '<br>• You return ' + esc(x.name) + ' <b>' + fmt(x.v) + '</b>'; });
+      note += '<br><span class="muted">Then everyone, including you, is even.</span>';
+      options.push(opt(plan.length === 1 ? 'Done: ' + plan[0].from + ' paid ' + plan[0].to : 'Mark these as done', { do: 'direct', plan }, 'black'));
+    } else {
+      after.filter((x) => x.net < -0.5).forEach((x) => { note += (note ? '<br>' : '') + esc(x.name) + ' gave ' + fmt(-x.net) + ' extra. Return it, or keep it as credit for next time.'; options.push(opt('Returned ' + x.name + ' ' + fmt(-x.net), { do: 'settle-out', person: x.name, amount: -x.net }, 'black')); });
+    }
+    after.filter((x) => x.net > 0.5 && !plan.some((p) => p.from === x.name)).slice(0, 2).forEach((x) => options.push(opt('Remind ' + x.name, { do: 'whatsapp', person: x.name, amount: x.net }, 'lime')));
+    options.push(opt('Undo', { do: 'undo' }));
+    return say(D, '', { type: 'answer', title: '💰 ' + (bill ? esc(bill.note) + ' ' + fmt(bill.amount) + ' · ' : '') + 'got ' + fmt(got), big: pending ? fmt(pending) : extraT ? fmt(extraT) : 'All settled 🎉', sub: pending ? 'still to collect' + (extraT ? ' · ' + fmt(extraT) + ' paid extra by others' : '') : extraT ? 'paid extra, to give back' : '', rows, note, options });
+  }
+
   // ---------------- Questions ----------------
   function periodOf(t) {
     const now = clock();
@@ -944,6 +1012,7 @@
     switch (a.do) {
       case 'noop': if (a.text) say(D, a.text); break;
       case 'undo': undo(D); break;
+      case 'direct': { snapshot(D, 'direct payments'); a.plan.forEach((p) => { addRecord(D, { kind: 'settlement', amount: p.amount, from: p.from, to: D.me, note: 'paid ' + p.to + ' directly' }); addRecord(D, { kind: 'settlement', amount: p.amount, from: D.me, to: p.to, note: 'via ' + p.from }); }); say(D, '✓ Noted! ' + a.plan.map((p) => esc(p.from) + ' paid ' + esc(p.to) + ' ' + fmt(p.amount)).join(', ') + '.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] }); break; }
       case 'delete-ids': { snapshot(D, 'delete'); const recs = D.records.filter((r) => a.ids.includes(r.id) && !r.deleted); removeRecords(D, recs); say(D, '🗑️ Deleted ' + recs.length + ' entries.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] }); break; }
       case 'remove-person': { snapshot(D, 'remove person'); D.people = D.people.filter((p) => !same(p.name, a.person)); say(D, 'Removed ' + esc(a.person) + ' from your people. Their old entries stay in your history.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] }); break; }
       case 'amount': handle(D, String(a.amount)); break;
@@ -1154,6 +1223,6 @@
     return out;
   }
 
-  const api = { paydaySplit, keepLabel, pruneChat, blank, migrateV1, ctx, handle, exec, runAction, proactive, addCaptures, startSetup, setupStep, recLine, splitText, dueSoon, buildPrompt, splitPlan, putInPot, snapshot, undo, live, allCats, niceDate, addRecord, touch, setClock: (f) => { clock = f; }, say, esc };
+  const api = { splitRows, netWith, paydaySplit, keepLabel, pruneChat, blank, migrateV1, ctx, handle, exec, runAction, proactive, addCaptures, startSetup, setupStep, recLine, splitText, dueSoon, buildPrompt, splitPlan, putInPot, snapshot, undo, live, allCats, niceDate, addRecord, touch, setClock: (f) => { clock = f; }, say, esc };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(typeof window !== 'undefined' ? window : globalThis);

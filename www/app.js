@@ -77,7 +77,7 @@
     $app.innerHTML = h;
     if (keepFocus) { const el = document.getElementById(keepFocus); if (el && el.focus) { el.focus(); try { if (caret != null) el.setSelectionRange(caret, caret); } catch (e) {} } }
     const sub = document.querySelector('.sub'); if (sub) sub.scrollTop = subScroll;
-    if (!ui.page && ui.view === 'chat' && ui.scroll) { window.scrollTo(0, document.body.scrollHeight); ui.scroll = false; } else if (!ui.page) window.scrollTo(0, winY);
+    if (!ui.page && ui.view === 'chat' && ui.scroll) { window.scrollTo(0, document.body.scrollHeight); setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 60); ui.scroll = false; } else if (!ui.page) window.scrollTo(0, winY);
   }
 
   function header() {
@@ -120,7 +120,12 @@
       const r = D.records.find((x) => x.id === c.recId);
       if (!r && !c.undone) return '';
       let h = '<div class="conf"><div class="c' + (c.paid ? ' paid' : '') + (c.undone || (r && r.deleted) ? ' undone' : '') + '"><span>' + svg(P.check, 2.6, 'width="12" height="12" style="vertical-align:-1px;margin-right:4px"') + amt(c.text) + '</span>';
+      if (c.rows && c.rows.length && r && !r.deleted) c.rows = E.splitRows(D, r) || c.rows;
       if (c.rows && c.rows.length && !c.undone && r && !r.deleted) h += '<span class="split-rows">' + c.rows.map((x) => '<span class="sr ' + x.kind + '"><b>' + esc(x.name) + '</b><span>' + amt(esc(x.note)) + '</span></span>').join('') + '</span>';
+      if (c.rows && c.rows.length && !c.undone && r && !r.deleted && L.same(r.paidBy, D.me)) {
+        const owing = Object.keys(r.shares).filter((n) => !L.same(n, D.me) && L.shareOf(r, n) > 0 && E.netWith(D, n) > 0.5);
+        if (owing.length) h += '<span class="acts"><button class="mini dark" data-act="collect-all" data-id="' + esc(r.id) + '">Everyone paid</button><button class="mini dark" data-act="collect-sheet" data-id="' + esc(r.id) + '">Who paid what?</button></span>';
+      }
       if (!c.undone && r && !r.deleted) {
         h += '<span class="acts"><button class="mini" data-act="edit" data-id="' + esc(r.id) + '">Edit</button><button class="mini" data-act="undo-rec" data-id="' + esc(r.id) + '">Undo</button></span>';
         if (c.pickCat && !c.showCats) h += '<span class="acts"><button class="mini" data-act="show-cats" data-msg="' + m.id + '">Pick category ▾</button></span>';
@@ -132,7 +137,7 @@
     if (c) {
       if (c.type === 'answer') {
         inner += (c.title ? '<span class="b">' + esc(c.title) + '</span>' : '') + (c.big ? '<span class="xb" style="font-size:24px;line-height:1.1">' + amt(esc(c.big)) + '</span>' : '') + (c.sub ? '<span class="s12 muted">' + esc(c.sub) + '</span>' : '');
-        if (c.rows && c.rows.length) inner += '<div style="display:flex;flex-direction:column;gap:7px;min-width:230px">' + c.rows.map((r) => '<div><div class="qrow between"><span class="grow">' + esc(r.label) + '</span><span class="b">' + amt(esc(r.value)) + '</span></div>' + (r.pct != null ? '<div class="bar" style="margin-top:4px"><i style="width:' + Math.max(3, Math.min(100, r.pct * 100)).toFixed(0) + '%;background:' + (r.color || '#A99EEA') + '"></i></div>' : '') + '</div>').join('') + '</div>';
+        if (c.rows && c.rows.length) inner += '<div style="display:flex;flex-direction:column;gap:7px;min-width:230px">' + c.rows.map((r) => '<div><div class="qrow between"><span class="grow">' + esc(r.label) + '</span><span class="b' + (r.tone ? ' tone-' + r.tone : '') + '">' + amt(esc(r.value)) + '</span></div>' + (r.pct != null ? '<div class="bar" style="margin-top:4px"><i style="width:' + Math.max(3, Math.min(100, r.pct * 100)).toFixed(0) + '%;background:' + (r.color || '#A99EEA') + '"></i></div>' : '') + '</div>').join('') + '</div>';
         if (c.note) inner += '<span class="s12 muted">' + c.note + '</span>';
         if (c.link) inner += '<button class="link" style="text-align:left" data-act="open" data-v="' + esc(c.link) + '">See more ›</button>';
       }
@@ -438,7 +443,13 @@
   function sheetView() {
     const s = ui.sheet; let inner = '';
     const head = (t) => '<div class="grabber"></div><div class="row between"><span class="b" style="font-size:18px">' + t + '</span><button class="icon-btn" style="background:#F5F4FA;width:38px;height:38px" data-act="close" aria-label="Close">' + svg(P.close) + '</button></div>';
-    if (s.type === 'record') inner = recordSheet(s, head);
+    if (s.type === 'collect') {
+      const r = D.records.find((x) => x.id === s.recId);
+      const names = r ? Object.keys(r.shares).filter((n) => !L.same(n, D.me) && L.shareOf(r, n) > 0) : [];
+      inner = head('Who paid what?') + '<div class="s13 muted">' + (r ? esc(r.note) + ' ' + amt(fmt(r.amount)) + ' · ' : '') + 'Type what each person gave you. Leave it empty if they haven\'t paid.</div>' +
+        names.map((n, i) => { const due = Math.max(0, E.netWith(D, n)); return '<div class="row" style="gap:10px"><span class="ic" style="background:' + avColor(n) + '">' + initial(n) + '</span><span class="grow"><span class="b s14">' + esc(n) + '</span><br><span class="s12 muted">' + (due ? 'owes ' + amt(fmt(due)) : 'settled') + '</span></span><input id="col-' + i + '" data-name="' + esc(n) + '" class="inp" style="width:110px;text-align:right" inputmode="decimal" placeholder="₹0"><button class="mini" data-act="col-full" data-i="' + i + '" data-v="' + due + '">Full</button></div>'; }).join('') +
+        '<button class="primary" data-act="col-save" data-id="' + esc(s.recId) + '">Work it out</button>';
+    } else if (s.type === 'record') inner = recordSheet(s, head);
     else if (s.type === 'plus') inner = head('Add') + [['form', P.grid, 'Add with a form', 'Pick category, people and split'], ['income-form', P.wallet, 'Add income', 'Salary, freelance, bonus'], ['save-form', P.down, 'Save money', 'Into a savings pot'], ['paste', P.msg, 'Paste a bank SMS', 'I\'ll read the payment from it']].map(([k, d, t, sub]) => '<button class="set-row" data-act="sheet" data-s="' + k + '"><span class="ic" style="background:#F5F4FA">' + svg(d) + '</span><span class="grow"><span class="b s14" style="display:block">' + t + '</span><span class="s12 muted">' + sub + '</span></span></button>').join('');
     else if (s.type === 'income-form') inner = head('Add income') + '<input id="f-amt" class="inp big" inputmode="decimal" placeholder="₹0"><input id="f-note" class="inp" placeholder="Salary" value="Salary"><button class="primary" data-act="f-income">Add income</button>';
     else if (s.type === 'save-form' || s.type === 'addmoney') {
@@ -707,6 +718,10 @@
       case 'show-cats': { const m = D.chat.find((x) => x.id === t.dataset.msg); if (m) { m.card.showCats = true; render(); } break; }
       case 'set-cat': { const m = D.chat.find((x) => x.id === t.dataset.msg); if (m) { m.card.options = [{ label: t.dataset.c, action: { do: 'set-cat', recId: m.card.recId, cat: t.dataset.c } }]; E.runAction(D, m.id, 0); m.card.options = null; m.card.done = null; } ui.scroll = true; afterChange(); break; }
       case 'cap-cat': { const m = D.chat.find((x) => x.id === t.dataset.msg); if (m) { const opts = m.card.options; m.card.options = [{ label: t.dataset.c, action: { do: 'capture-add', cat: t.dataset.c, note: m.card.guess && m.card.guess.reason !== 'unknown' && m.card.guess.reason !== 'person' ? m.card.guess.note : m.card.payment.name } }]; m.card.showCats = false; E.runAction(D, m.id, 0); m.card.allOptions = opts; } ui.scroll = true; afterChange(); break; }
+      case 'collect-all': chatDo(() => E.exec(D, { type: 'collect', all: true, recId: t.dataset.id }, '')); break;
+      case 'collect-sheet': ui.sheet = { type: 'collect', recId: t.dataset.id }; pushNav(); render(); break;
+      case 'col-full': { const el = document.getElementById('col-' + t.dataset.i); if (el) el.value = t.dataset.v; break; }
+      case 'col-save': { const pays = [...document.querySelectorAll('[id^="col-"]')].map((el) => ({ name: el.dataset.name, amount: Number((el.value || '').replace(/[^0-9.]/g, '')) || 0 })).filter((x) => x.amount > 0); if (!pays.length) return toast('Enter at least one amount'); const recId = t.dataset.id; popSheet(); chatDo(() => E.exec(D, { type: 'collect', pays, recId }, '')); break; }
       case 'edit': openRecord(t.dataset.id); pushNav(); break;
       case 'undo-rec': { const r = D.records.find((x) => x.id === t.dataset.id); if (r) { E.snapshot(D, 'delete'); r.deleted = true; E.touch(r); if (r.bill) { const b = D.bills.find((x) => x.id === r.bill); if (b) b.paidMonths = (b.paidMonths || []).filter((mk) => mk !== (r.date || '').slice(0, 7)); } toast('Removed'); } afterChange(); break; }
       case 'del': { const r = D.records.find((x) => x.id === t.dataset.id); if (r) { E.snapshot(D, 'delete'); r.deleted = true; E.touch(r); if (r.bill) { const b = D.bills.find((x) => x.id === r.bill); if (b) b.paidMonths = (b.paidMonths || []).filter((mk) => mk !== (r.date || '').slice(0, 7)); } } popSheet(); toast('Deleted'); afterChange(); break; }

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Cookie & Milk: personal and shared expense tracker for Android",
   "scripts": {
-    "test": "node tests/logic.test.js && node tests/engine.test.js"
+    "test": "node tests/logic.test.js && node tests/engine.test.js && node tests/collect.test.js"
   },
   "dependencies": {
     "@capacitor/android": "^7.0.0",

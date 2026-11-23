@@ -203,6 +203,29 @@
     return { type: 'safe-set', amount: Number(a), period };
   }
 
+
+  // "subanu gave 300 jithin 500 aravind 700", "got 300 from subanu and 500 from jithin", "everyone paid"
+  function parseCollect(t, people) {
+    if (/^(everyone|everybody|all of them|all|they all|all three|all four|all 3|all 4)\s+(paid|gave|settled|paid me|paid back|sent)\b/.test(t) && !/\d/.test(t)) return { type: 'collect', all: true };
+    if (!/\b(gave|given|paid|sent|transferred|returned|received|got|collected|gpay\w*|phonepe\w*|upi\w*)\b/.test(t)) return null;
+    const w = t.replace(/[,;:&+]/g, ' ').split(/\s+/).filter(Boolean);
+    const isN = (x) => /^\d+(\.\d+)?$/.test(x || '');
+    const skip = /^(gave|given|paid|pay|sent|transferred|returned|received|got|collected|me|back|rs|inr|from|to|and|has|have|had|just|only|already|gpay\w*|phonepe\w*|upi\w*|cash|of)$/;
+    const pays = []; const seen = new Set();
+    for (let i = 0; i < w.length; i++) {
+      const p = matchPerson(w[i], people);
+      if (p && !seen.has(p)) {
+        let amt = null;
+        if (i >= 2 && w[i - 1] === 'from' && isN(w[i - 2])) amt = Number(w[i - 2]);
+        if (amt === null) for (let j = i + 1; j < Math.min(w.length, i + 5); j++) { if (isN(w[j])) { amt = Number(w[j]); break; } if (/^(full|fully|everything|all|whole)$/.test(w[j])) { amt = 'full'; break; } if (matchPerson(w[j], people) || !skip.test(w[j])) break; }
+        if (amt === null && i >= 1 && isN(w[i - 1]) && !pays.some((x) => x.at === i - 1)) amt = Number(w[i - 1]);
+        if (amt !== null) { pays.push({ name: p, amount: amt, at: i }); seen.add(p); }
+      }
+    }
+    if (pays.length < 2) return null;
+    return { type: 'collect', pays: pays.map((x) => ({ name: x.name, amount: x.amount })) };
+  }
+
   // ---------------- The message parser ----------------
   // ctx = { me, people:[{name}], shortcuts:{flat:[names]}, bills:[{id,name,amount}], goals:[{name}], sinking:[{name}], learned:{}, autoSplit:{cat:[names]}, today: Date }
   function parse(raw, ctx) {
@@ -252,6 +275,10 @@
       if (/\b(a|one) (month)\b/.test(t)) return { type: 'chat-keep', days: 30 };
       if (/(every ?day|daily|each day|fresh|one day|1 day|only today)/.test(t)) return { type: 'chat-keep', days: 0 };
     }
+
+    // ---------- Group collection: "subanu gave 300, jithin 500, aravind 700", "everyone paid" ----------
+    const col = parseCollect(t, people);
+    if (col) return col;
 
     // ---------- Delete entries ----------
     m = t.match(/^(?:please\s+)?(?:delete|remove|erase|clear|cancel|undo)\s+(.*)$/);
@@ -505,6 +532,7 @@
     if (/\byesterday\b/.test(t)) { const d = new Date(today); d.setDate(d.getDate() - 1); flags.date = isoDate(d); t = t.replace(/\byesterday\b/g, ' '); }
     const method = (t.match(/\b(cash|card|credit card|debit card|upi|gpay|phonepe|paytm)\b/) || [])[1];
     if (method) t = t.replace(/\b(credit card|debit card|cash|card|upi|gpay|phonepe|paytm)\b/g, ' ');
+    t = t.replace(/\b(?:split|divide[d]?)\s+(?:in|into|by)?\s*\d+\s*(?:ways?|people|persons)?\b|\b\d+\s+ways\b|\bsplit(?: equally| evenly)?\b/g, ' ');
     if (/\bfor me\b/.test(t)) { flags.forMe = true; t = t.replace(/\bfor me\b/g, ' '); }
 
     // "<name> treat"
