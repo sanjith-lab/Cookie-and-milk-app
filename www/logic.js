@@ -85,20 +85,82 @@
 
   // ---------------- Category guessing ----------------
   function stem(w) { return w.replace(/'s$/, '').replace(/(es|s)$/, (m, g, off, str) => (str.length > 4 ? '' : m)); }
-  function guessCategory(words, learned) {
-    learned = learned || {};
-    for (const w of words) { const k = norm(w); if (learned[k]) return { cat: learned[k], learned: true }; }
-    const phrase = words.map(norm).join(' ');
-    for (const k of Object.keys(learned)) if (k.includes(' ') && phrase.includes(k)) return { cat: learned[k], learned: true };
-    for (const [cat, list] of Object.entries(KEYWORDS)) {
-      const set = list.split(' ');
-      for (const w0 of words) {
-        const w = norm(w0); if (!w || /^\d/.test(w)) continue;
-        const s = stem(w);
-        if (set.includes(w) || set.includes(s)) return { cat };
-        if (s.length >= 5 && set.some((k) => k.length >= 5 && (k.startsWith(s) || s.startsWith(k)))) return { cat };
+  // ---------------- The dictionary ----------------
+  const DICT = (typeof module !== 'undefined' && module.exports) ? require('./dictionary.js') : (root.CookieDict || { words: new Map(), phrases: [], WEAK: new Set(), BY_AMOUNT: {} });
+  const BUCKETS = {};
+  DICT.words.forEach((cat, w) => { if (w.length >= 4) (BUCKETS[w[0]] = BUCKETS[w[0]] || []).push(w); });
+  function variants(w) {
+    const v = [w];
+    const add = (x) => { if (x && x.length >= 2 && !v.includes(x)) v.push(x); };
+    add(w.replace(/'s$/, ''));
+    if (/ies$/.test(w)) add(w.replace(/ies$/, 'y'));
+    if (/es$/.test(w)) add(w.replace(/es$/, ''));
+    if (/s$/.test(w)) add(w.replace(/s$/, ''));
+    if (/ing$/.test(w)) { add(w.replace(/ing$/, '')); add(w.replace(/ing$/, 'e')); }
+    if (/ed$/.test(w)) { add(w.replace(/ed$/, '')); add(w.replace(/d$/, '')); }
+    add(w.replace(/[^a-z0-9]/g, ''));
+    return v;
+  }
+  function editDistance(a, b, max) {
+    if (Math.abs(a.length - b.length) > max) return max + 1;
+    const d = []; for (let i = 0; i <= a.length; i++) { d[i] = [i]; }
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+      let rowMin = Infinity;
+      for (let j = 1; j <= b.length; j++) {
+        const c = a[i - 1] === b[j - 1] ? 0 : 1;
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + c);
+        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+        rowMin = Math.min(rowMin, d[i][j]);
       }
+      if (rowMin > max) return max + 1;
     }
+    return d[a.length][b.length];
+  }
+  const skeleton = (w) => w[0] + w.slice(1).replace(/[aeiouyh]/g, '').replace(/(.)\1+/g, '$1');
+  const SKELETONS = new Map();
+  DICT.words.forEach((cat, w) => { if (w.length >= 5 && /^[a-z]+$/.test(w)) { const k = skeleton(w); if (k.length >= 3 && !SKELETONS.has(k)) SKELETONS.set(k, w); } });
+  function fuzzyWord(w) {
+    if (w.length < 6 || /\d/.test(w)) return null;
+    const sk = skeleton(w);
+    if (sk.length >= 3 && SKELETONS.has(sk)) return SKELETONS.get(sk);
+    const max = w.length >= 7 ? 2 : 1;
+    let best = null, bestD = max + 1;
+    for (const k of BUCKETS[w[0]] || []) { const dd = editDistance(w, k, max); if (dd < bestD) { bestD = dd; best = k; if (dd === 1 && max === 1) break; } }
+    return best && bestD <= max ? best : null;
+  }
+  function dictLookup(w) { for (const x of variants(w)) if (DICT.words.has(x)) return x; return null; }
+
+  // words: array of words; learned: user-taught words; opts: { amount, fuzzy }
+  function guessCategory(words, learned, opts) {
+    learned = learned || {}; opts = opts || {};
+    const list = (words || []).map(norm).filter((w) => w && !/^\d+(\.\d+)?$/.test(w));
+    // 1. What you taught Cookie always wins
+    for (const w of list) { if (learned[w]) return { cat: learned[w], learned: true }; for (const x of variants(w)) if (learned[x]) return { cat: learned[x], learned: true }; }
+    const phrase = ' ' + list.join(' ') + ' ';
+    for (const k of Object.keys(learned)) if (k.includes(' ') && phrase.includes(' ' + k + ' ')) return { cat: learned[k], learned: true };
+    // 2. Amount-aware words ("hotel 300" is food, "hotel 4000" is a trip)
+    for (const w of list) { const f = DICT.BY_AMOUNT[w]; if (f && list.length <= 3) return { cat: f(opts.amount), word: w }; }
+    // 3. Longest phrase first ("tea powder" is groceries, "bike service" is transport)
+    let weakHit = null, familyHit = null;
+    for (const [p, cat] of DICT.phrases) if (phrase.includes(' ' + p + ' ')) { if (DICT.WEAK.has(p)) { weakHit = weakHit || { cat, word: p }; continue; } if (cat === 'Family support') { familyHit = familyHit || { cat, word: p }; continue; } return { cat, word: p }; }
+    // 4. Single words, in the order you typed them; weak and family words only count if nothing better
+    for (const w of list) {
+      const k = dictLookup(w); if (!k) continue;
+      const cat = DICT.words.get(k);
+      if (DICT.WEAK.has(k)) { weakHit = weakHit || { cat, word: k }; continue; }
+      if (cat === 'Family support') { familyHit = familyHit || { cat, word: k }; continue; }
+      return { cat, word: k };
+    }
+    // 5. Older keyword list with prefix matching
+    for (const [cat, l] of Object.entries(KEYWORDS)) {
+      const set = l.split(' ');
+      for (const w of list) { const s = stem(w); if (set.includes(w) || set.includes(s)) return { cat, word: w }; if (s.length >= 5 && set.some((k) => k.length >= 5 && (k.startsWith(s) || s.startsWith(k)))) return { cat, word: w }; }
+    }
+    // 6. Typos ("groceris", "medicen", "petrl")
+    if (opts.fuzzy !== false) for (const w of list) { if (FILLER.has(w)) continue; const k = fuzzyWord(w); if (k && !DICT.WEAK.has(k)) return { cat: DICT.words.get(k), word: k, from: w, fuzzy: true }; }
+    if (familyHit) return familyHit;
+    if (weakHit) return weakHit;
     return { cat: 'Other' };
   }
 
@@ -540,7 +602,7 @@
     // New names: "lunch aravind 50 subanu 50 me 30" or "lunch 200 with aravind and subanu"
     const isNum = (w) => /^\d+(\.\d+)?$/.test(w || '');
     const nameLike = (w) => /^[a-z]{2,}$/.test(w || '') && !isMeWord(w) && !FILLER.has(w) && !matchPerson(w, people) && !(ctx.shortcuts && ctx.shortcuts[w]) &&
-      !/^(paid|treat|split|each|and|with|between|by|he|she|they|him|her|we|us|k|rs|today|yesterday|lunch|dinner|breakfast)$/.test(w) && guessCategory([w], ctx.learned).cat === 'Other';
+      !/^(paid|treat|split|each|and|with|between|by|he|she|they|him|her|we|us|k|rs|today|yesterday|lunch|dinner|breakfast)$/.test(w) && guessCategory([w], ctx.learned, { fuzzy: false }).cat === 'Other';
     const newPeople = [];
     const pairs = words.map((w, i) => (/^[a-z]+$/.test(w) && isNum(words[i + 1]) ? i : -1)).filter((i) => i >= 0);
     const mePair = pairs.some((i) => isMeWord(words[i]));
@@ -553,7 +615,7 @@
     let payer = null;
     const named = []; // people mentioned (not me)
     let meMentioned = false;
-    const customShares = {};
+    const customShares = {}; let withWord = false;
     const noteWords = [];
     let amounts = [];
     for (let i = 0; i < words.length; i++) {
@@ -574,17 +636,19 @@
       }
       if (sc) { sc.forEach((n) => { if (!named.includes(n)) named.push(n); }); meMentioned = true; continue; }
       if (w === 'paid' && words[i + 1] === 'by' && matchPerson(words[i + 2], people)) { payer = matchPerson(words[i + 2], people); if (!named.includes(payer)) named.push(payer); i += 2; continue; }
-      if (w === 'with' || w === 'between') { meMentioned = true; continue; }
+      if (w === 'with' || w === 'between') { meMentioned = true; withWord = true; continue; }
       if (w === 'and' || w === '&') continue;
       noteWords.push(w);
     }
+    // "lunch with aravind 300": one number after the only name is the total, not Aravind's share
+    if (withWord && !amounts.length && Object.keys(customShares).length === 1 && !('__me' in customShares)) { const k = Object.keys(customShares)[0]; amounts.push(customShares[k]); delete customShares[k]; }
     const customKeys = Object.keys(customShares);
     let amount = customKeys.length ? round2(Object.values(customShares).reduce((a, b) => a + b, 0) + amounts.reduce((a, b) => a + b, 0)) : (amounts.length ? amounts[0] : null);
     const cleanNote = noteWords.filter((w) => !FILLER.has(w) && !/^(he|she|they|him|her|we|us)$/.test(w));
-    const g = guessCategory(cleanNote, ctx.learned);
+    const g = guessCategory(cleanNote, ctx.learned, { amount });
     let cat = flags.claim && g.cat === 'Other' ? 'Transport' : g.cat;
     if (ctx.renamed && ctx.renamed[cat]) cat = ctx.renamed[cat];
-    const note = titleCase(cleanNote.join(' ')) || cat;
+    const note = titleCase(cleanNote.map((w) => (g.fuzzy && norm(w) === g.from ? g.word : w)).join(' ')) || cat;
     const me = ctx.me;
     payer = payer || me;
 

@@ -63,3 +63,11 @@ a.strictEqual(Q('change name of health to health and lifestyle').type, 'cat-rena
 a.strictEqual(Q('set something weird 500').type, 'unclear');
 a.strictEqual(Q('safe 150').type, 'unclear');
 console.log('smart command tests passed');
+
+// ---- Dictionary: practical words land in the right place ----
+{
+  const ctxD = { people: [], me: 'Sanjith' };
+  const expect = { 'pad 200': 'Personal Care', 'groceris 500': 'Groceries', 'medicen 300': 'Medical', 'thakkali 30': 'Groceries', 'sappadu 120': 'Food & Drink', 'hotel 250': 'Food & Drink', 'hotel 4500': 'Trips', 'tea powder 180': 'Groceries', 'bike service 900': 'Transport', 'metro recharge 500': 'Transport', 'phone recharge 299': 'Internet & Mobile', 'watch movie 400': 'Entertainment', 'medicine for amma 600': 'Medical', 'eb bill 1200': 'Bills & Utilities', 'moi 1000': 'Gifts', 'xerox 20': 'Education', 'uber eats 300': 'Food & Drink', 'shampu 200': 'Personal Care', 'fastag 1000': 'Transport', 'maid 3000': 'Home' };
+  for (const [t, cat] of Object.entries(expect)) { const r = L.parse(t, ctxD); if (r.cat !== cat) throw new Error('dictionary: ' + t + ' gave ' + r.cat + ', expected ' + cat); }
+  console.log('dictionary tests passed');
+}
