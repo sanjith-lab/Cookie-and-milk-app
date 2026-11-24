@@ -160,9 +160,9 @@
       }
       D.pending = null;
     }
-    // A pasted Gemini key (keep its exact letters)
-    const km = text.match(/^(?:my\s+)?(?:gemini|ai|api)\s*(?:api\s*)?key\s*(?:is|:)?\s*([A-Za-z0-9_.\-]{20,})\s*$/i) || text.match(/^\s*((?:AIza|AQ\.)[A-Za-z0-9_.\-]{20,})\s*$/);
-    if (km) { const mm = D.chat[D.chat.length - 1]; if (mm && mm.from === 'me') mm.text = '🔑 Gemini key (hidden)'; return exec(D, { type: 'ai-key', key: km[1] }, ''); }
+    // A pasted Claude API key (keep its exact letters, hide it from the chat)
+    const km = text.match(/^(?:my\s+)?(?:claude|ai|api)\s*(?:api\s*)?key\s*(?:is|:)?\s*(sk-ant-[A-Za-z0-9_\-]{20,})\s*$/i) || text.match(/^\s*(sk-ant-[A-Za-z0-9_\-]{20,})\s*$/);
+    if (km) { const mm = D.chat[D.chat.length - 1]; if (mm && mm.from === 'me') mm.text = '🔑 Claude key (hidden)'; return exec(D, { type: 'ai-key', key: km[1] }, ''); }
     // Several spends in one message: "tea 20, samosa 30, auto 60"
     const multi = multiItems(D, text);
     if (multi) return multi;
@@ -175,7 +175,7 @@
     D._noAI = true;
     try { const multi = multiItems(D, text); if (multi) return multi; return exec(D, L.parse(text, ctx(D)), text); } finally { D._noAI = false; }
   }
-  function aiReady(D) { return !!(D.ai && D.ai.on && (D.ai.key || D.ai.groqKey)); }
+  function aiReady(D) { return !!(D.ai && D.ai.on && D.ai.key && /^sk-ant-/.test(D.ai.key)); }
   // Send to the AI brain only what the rules can't handle well
   function wantsAI(D, it, text) {
     if (!aiReady(D) || D._noAI) return false;
@@ -241,9 +241,9 @@
         return say(D, '✓ ' + (it.cat === '__all' ? 'Monthly budget' : esc(it.cat) + ' budget') + ' removed.', { type: 'ask', options: [opt('Undo', { do: 'undo' })] });
       case 'sms-off': snapshot(D, 'payment detection'); D.sms.enabled = false; return say(D, '📴 Payment detection is off. Say <b>turn on payment detection</b> any time.');
       case 'layout': return layoutOp(D, it);
-      case 'ai-key': D.ai = Object.assign({ on: true }, D.ai, { key: it.key, on: true, model: '' }); return say(D, '🔑 Saved your Gemini key. Smart mode is on! Try asking me anything, like <b>am I spending more on weekends?</b>');
-      case 'ai-toggle': D.ai = Object.assign({}, D.ai, { on: it.on }); return say(D, it.on ? (D.ai.key ? '🧠 Smart mode is on.' : '🧠 Smart mode needs a free Gemini key. Tap below to set it up.') : '🧠 Smart mode is off. I\'ll use my built-in rules only.', !D.ai.key && it.on ? { type: 'ask', options: [opt('Set up smart mode', { do: 'sheet', sheet: 'ai' }, 'black')] } : undefined);
-      case 'ai': if (!aiReady(D)) return say(D, '🧠 Smart mode needs a free Gemini or Groq key first.', { type: 'ask', options: [opt('Set up smart mode', { do: 'sheet', sheet: 'ai' }, 'black')] }); return { effect: { type: 'ai', text: it.text } };
+      case 'ai-key': D.ai = Object.assign({ on: true }, D.ai, { key: it.key, on: true, model: '' }); return say(D, '🔑 Saved your Claude key. Smart mode is on! Try asking me anything, like <b>am I spending more on weekends?</b>');
+      case 'ai-toggle': D.ai = Object.assign({}, D.ai, { on: it.on }); return say(D, it.on ? (D.ai.key ? '🧠 Smart mode is on.' : '🧠 Smart mode needs a Claude API key. Tap below to set it up.') : '🧠 Smart mode is off. I\'ll use my built-in rules only.', !D.ai.key && it.on ? { type: 'ask', options: [opt('Set up smart mode', { do: 'sheet', sheet: 'ai' }, 'black')] } : undefined);
+      case 'ai': if (!aiReady(D)) return say(D, '🧠 Smart mode needs a Claude API key first.', { type: 'ask', options: [opt('Set up smart mode', { do: 'sheet', sheet: 'ai' }, 'black')] }); return { effect: { type: 'ai', text: it.text } };
       case 'chat-keep': return chatKeep(D, it.days);
       case 'chat-clear': D.chatClearedAt = clock().getTime(); return say(D, '🧹 Fresh chat! Everything you logged is still saved.');
       case 'delete': return deleteEntries(D, it);
@@ -840,7 +840,7 @@
       { label: 'Reminders', value: D.reminders.on ? 'on · ' + hourText(Math.floor(D.reminders.morning), 0) + ' & ' + hourText(Math.floor(D.reminders.night), 0) : 'off' },
       { label: 'Payment detection', value: D.sms.enabled ? 'on' : 'off' },
       { label: 'Chat history', value: D.chatKeep < 0 ? 'forever' : D.chatKeep === 0 ? 'today only' : (D.chatKeep == null ? 7 : D.chatKeep) + ' days' },
-      { label: 'Smart mode', value: D.ai && (D.ai.key || D.ai.groqKey) ? (D.ai.on ? 'on · ' + [D.ai.key ? 'Gemini' : '', D.ai.groqKey ? 'Groq' : ''].filter(Boolean).join(' + ') : 'off') : 'not set up' },
+      { label: 'Smart mode (Claude Haiku)', value: D.ai && D.ai.key ? (D.ai.on ? 'on' : 'off') : 'not set up' },
       { label: 'Theme', value: D.theme === 'dark' ? 'dark' : 'light' },
       { label: 'Last backup', value: D.lastBackup ? new Date(D.lastBackup).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'never' },
     ];
@@ -1140,7 +1140,7 @@
   // ---------------- Help ----------------
   function help(D) {
     return say(D, '', { type: 'answer', title: 'Things you can tell me 🍪', rows: [
-      { label: 'tea 20, samosa 30, auto 60', value: '3 entries at once' }, { label: 'this month vs last month', value: 'graph' }, { label: 'where did my money go', value: 'category ring' }, { label: 'show my settings', value: 'all settings' }, { label: 'move recent to the top', value: 'arrange overview' }, { label: 'rename savings to investments', value: 'rename a card' }, { label: 'pin this', value: 'graph on overview' }, { label: 'why is my safe to spend 0', value: 'the maths' }, { label: 'backup now', value: 'save a backup' }, { label: 'dark mode', value: 'theme' }, { label: 'open ai settings', value: 'smart mode (Gemini)' },
+      { label: 'tea 20, samosa 30, auto 60', value: '3 entries at once' }, { label: 'this month vs last month', value: 'graph' }, { label: 'where did my money go', value: 'category ring' }, { label: 'show my settings', value: 'all settings' }, { label: 'move recent to the top', value: 'arrange overview' }, { label: 'rename savings to investments', value: 'rename a card' }, { label: 'pin this', value: 'graph on overview' }, { label: 'why is my safe to spend 0', value: 'the maths' }, { label: 'backup now', value: 'save a backup' }, { label: 'dark mode', value: 'theme' }, { label: 'open ai settings', value: 'smart mode (Claude)' },
       { label: 'tea 40', value: 'just you' }, { label: 'arjun me pizza 900', value: 'split 2 ways' }, { label: 'arjun tea 40', value: 'Arjun owes all' },
       { label: 'arjun paid dinner 900', value: 'you owe half' }, { label: 'dinner 2400 my treat', value: 'no split' }, { label: 'rent paid / emi paid', value: 'mark a bill paid' },
       { label: 'rent 18000 every 5th', value: 'add a bill' }, { label: 'salary 85000', value: 'income + payday split' }, { label: 'save 5000 emergency', value: 'savings' },

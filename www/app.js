@@ -67,6 +67,7 @@
   function render() {
     document.body.classList.toggle('hide-amt', !!D.hideAmounts);
     document.documentElement.classList.toggle('dark', D.theme === 'dark');
+    if (D.ai && (D.ai.groqKey || (D.ai.key && !/^sk-ant-/.test(D.ai.key)))) D.ai = { on: true, key: '', relay: D.ai.relay || '', model: '' };
     let h = header();
     if (D.setup !== 'done' || ui.view === 'chat') h += chatView(); else h += overview();
     if (ui.page) h += '<div class="sub">' + pageView() + '</div>';
@@ -501,7 +502,7 @@
       row('shortcuts', P.bolt, '#E4E0F7', 'Shortcuts', Object.keys(D.shortcuts).map((k) => '"' + k + '"').join(', ') || 'like "flat" = you, Arjun, Ram') + '</div>';
     h += '<div class="set-sec"><div class="h">COOKIE</div>' + row('reminders', P.bell, '#F9D4DA', 'Reminders', D.reminders.on ? 'Morning at ' + hourLabel(D.reminders.morning) + ', nightly nudge at ' + hourLabel(D.reminders.night) : 'Off') +
       row('chathist', P.msg, '#E4E0F7', 'Chat history', 'Chat opens fresh every day · old chats ' + E.keepLabel(D.chatKeep == null ? 7 : D.chatKeep), val(D.chatKeep < 0 ? 'Forever' : D.chatKeep === 0 ? '1 day' : (D.chatKeep == null ? 7 : D.chatKeep) + ' days')) +
-      row('ai', P.bolt, '#D8F27E', 'Smart mode (Gemini)', D.ai && D.ai.key ? (D.ai.on ? 'On · understands anything you type' : 'Off') : 'Free · makes Cookie understand anything', val(D.ai && D.ai.key ? (D.ai.on ? 'On' : 'Off') : 'Set up')) +
+      row('ai', P.bolt, '#D8F27E', 'Smart mode (Claude Haiku)', D.ai && D.ai.key ? (D.ai.on ? 'On · understands anything you type' : 'Off') : 'Makes Cookie understand anything', val(D.ai && D.ai.key ? (D.ai.on ? 'On' : 'Off') : 'Set up')) +
       tog('theme', D.theme === 'dark', P.eye, '#EEEDF3', 'Dark mode', 'Or just say "dark mode" in the chat') +
       row('payments', P.msg, '#FCE3C4', 'Payment detection', D.sms.enabled ? 'Watching bank SMS for UPI and card payments' : 'Off · catch UPI payments automatically', val(D.sms.enabled ? 'On' : 'Off')) + '</div>';
     h += '<div class="set-sec"><div class="h">PRIVACY</div>' + tog('hideNames', D.hideNames, P.eye, '#EEEDF3', 'Hide names in Ask AI', 'Friends shown as Friend 1, 2') + tog('hideAmounts', D.hideAmounts, P.eye, '#EEEDF3', 'Hide amounts', 'Blur numbers when someone is looking') + '</div>';
@@ -616,17 +617,16 @@
     if (t === 'sync') return head('Shared sync') + '<div class="s13 muted">Shared expenses sync through one Google Sheet that everyone uses. Personal expenses stay on your phone. Setup steps are in the app\'s GitHub page (README).</div><span class="lbl2">Apps Script web app URL</span><input id="sy-url" class="inp" placeholder="https://script.google.com/macros/s/.../exec" value="' + esc(D.sync.url) + '"><span class="lbl2">Secret key</span><input id="sy-key" class="inp" value="' + esc(D.sync.key) + '">' + (ui.syncErr ? '<div class="s12 red">' + esc(ui.syncErr) + '</div>' : '') + '<button class="primary" data-act="sy-save">Save and sync now</button>';
     if (t === 'ai') {
       const a = D.ai || {};
-      return head('Smart mode') + '<div class="s13">With a free Google Gemini key, Cookie understands anything you type: messy sentences, questions like <b>am I spending more on weekends?</b>, advice and multi-step requests.</div>' +
-        '<div class="card" style="background:#F5F4FA"><span class="b s13">🔒 Privacy</span><div class="s12 muted">Only messages my rules can\'t understand go to Google. Names become PersonA, PersonB; UPI IDs and account numbers are removed; only totals and your last few entries are shared. On Google\'s free tier, Google may use what\'s sent to improve its products. All maths stays on your phone, and every change has Undo.</div></div>' +
-        '<span class="lbl2">1. Get a free key at aistudio.google.com/apikey (sign in, "Create API key", copy it)</span><button class="btn" style="align-self:flex-start" data-act="ai-getkey">Open Google AI Studio</button>' +
-        '<span class="lbl2">2. Paste your key here</span><input id="ai-key" class="inp" placeholder="AIza..." value="' + esc(a.key || '') + '" autocomplete="off">' +
+      return head('Smart mode') + '<div class="s13">With a Claude API key, Cookie uses <b>Claude Haiku</b> to understand anything you type: messy sentences, questions like <b>am I spending more on weekends?</b>, advice and multi-step requests. It costs about ₹0.04 per smart message.</div>' +
+        '<div class="card" style="background:#F5F4FA"><span class="b s13">🔒 Privacy</span><div class="s12 muted">Only messages my rules can\'t understand go to Claude. Names become PersonA, PersonB; UPI IDs and account numbers are removed; only totals and your last few entries are shared. All maths stays on your phone, and every change has Undo.</div></div>' +
+        '<span class="lbl2">1. Get a key at console.anthropic.com (sign in, Settings › API keys › Create key, copy it). Add a little credit under Billing.</span><button class="btn" style="align-self:flex-start" data-act="ai-getkey">Open Claude Console</button>' +
+        '<span class="lbl2">2. Paste your key here</span><input id="ai-key" class="inp" placeholder="sk-ant-..." value="' + esc(a.key || '') + '" autocomplete="off">' +
+        '<span class="lbl2">3. Only if Cookie says it can\'t reach Claude: paste your relay URL</span><input id="ai-relay" class="inp" placeholder="https://script.google.com/macros/s/.../exec" value="' + esc(a.relay || '') + '" autocomplete="off">' +
         (ui.aiMsg ? '<div class="s12 ' + (ui.aiOk ? 'green' : 'red') + '">' + esc(ui.aiMsg) + '</div>' : '') +
-        '<span class="lbl2">Backup brain (recommended): free Groq key from console.groq.com/keys. When Gemini is busy, Groq answers instead.</span><button class="btn" style="align-self:flex-start" data-act="ai-getgroq">Open Groq console</button><input id="ai-groq" class="inp" placeholder="gsk_..." value="' + esc(a.groqKey || '') + '" autocomplete="off">' +
-        '<span class="lbl2">3. Only if you see "Unable to resolve host": your network blocks Google\'s AI server. Set up the free relay script (5 min, steps on the link below) and paste its URL here</span><input id="ai-relay" class="inp" placeholder="https://script.google.com/macros/s/.../exec" value="' + esc(a.relay || '') + '" autocomplete="off"><button class="btn" style="align-self:flex-start" data-act="ai-relayhelp">Relay setup steps</button>' +
         '<button class="primary" data-act="ai-save">Save and test</button>' +
-        ((a.key || a.groqKey) ? '<button class="set-row" data-act="ai-onoff"><span class="grow"><span class="b s14">Smart mode</span><br><span class="s12 muted">' + (a.lastBrain ? 'Last answer from ' + esc(a.lastBrain) : a.model ? 'Using ' + esc(a.model) : 'Model is picked automatically') + (a.used ? ' · ' + a.used + ' questions so far' : '') + '</span></span><span class="toggle ' + (a.on ? 'on' : '') + '"><i></i></span></button><button class="danger" data-act="ai-forget">Remove key</button>' : '');
+        (a.key ? '<button class="set-row" data-act="ai-onoff"><span class="grow"><span class="b s14">Smart mode</span><br><span class="s12 muted">' + (a.model ? 'Using ' + esc(a.model) : 'Claude Haiku') + (a.used ? ' · ' + a.used + ' questions so far' : '') + '</span></span><span class="toggle ' + (a.on ? 'on' : '') + '"><i></i></span></button><button class="danger" data-act="ai-forget">Remove key</button>' : '');
     }
-    if (t === 'backup') return head('Backup &amp; restore') + '<div class="s13 muted">' + (D.lastBackup ? 'Last backup: ' + timeAgo(D.lastBackup) + '. ' : '') + 'I save a backup file in Documents/CookieAndMilk every week by myself. Your Gemini key is never included.</div><button class="primary" data-act="bk-share">Back up now (save or share file)</button><button class="btn" style="align-self:flex-start" data-act="bk-copy">Copy backup as text</button><span class="lbl2">Restore from a backup file</span><input id="bk-file" type="file" accept=".json,application/json,text/plain" class="inp"><textarea id="bk-text" class="inp" rows="4" placeholder="Paste a backup here to restore"></textarea><button class="btn black" style="align-self:flex-start" data-act="bk-restore">Restore</button>';
+    if (t === 'backup') return head('Backup &amp; restore') + '<div class="s13 muted">' + (D.lastBackup ? 'Last backup: ' + timeAgo(D.lastBackup) + '. ' : '') + 'I save a backup file in Documents/CookieAndMilk every week by myself. Your Claude key is never included.</div><button class="primary" data-act="bk-share">Back up now (save or share file)</button><button class="btn" style="align-self:flex-start" data-act="bk-copy">Copy backup as text</button><span class="lbl2">Restore from a backup file</span><input id="bk-file" type="file" accept=".json,application/json,text/plain" class="inp"><textarea id="bk-text" class="inp" rows="4" placeholder="Paste a backup here to restore"></textarea><button class="btn black" style="align-self:flex-start" data-act="bk-restore">Restore</button>';
     return head('');
   }
 
@@ -652,7 +652,7 @@
     if (eff.type === 'upi') { const p = D.people.find((x) => same(x.name, eff.person)); if (!p || !p.upi) return toast('Add ' + eff.person + '\'s UPI ID: type "' + norm(eff.person) + ' upi name@bank"'); window.location.href = 'upi://pay?pa=' + encodeURIComponent(p.upi) + '&pn=' + encodeURIComponent(p.name) + '&am=' + Number(eff.amount).toFixed(2) + '&cu=INR&tn=' + encodeURIComponent('Settle up via Cookie & Milk'); }
     if (eff.type === 'whatsapp') { const msg = eff.text || ('Hey ' + eff.person + '! Quick reminder about the ' + fmt(eff.amount) + ' for our shared expenses 🙂'); const full = msg + (D.myUpi ? '\nYou can pay me at ' + D.myUpi : ''); window.open('https://wa.me/?text=' + encodeURIComponent(full), '_blank'); }
   }
-  // ---------- Smart mode (Gemini) ----------
+  // ---------- Smart mode (Claude Haiku) ----------
   async function runAI(text) {
     const id = 'think-' + Date.now();
     D.chat.push({ id, ts: Date.now(), day: L.isoDate(new Date()), from: 'ck', text: '', card: { type: 'thinking' } });
@@ -905,17 +905,15 @@
       case 'sy-save': D.sync.url = document.getElementById('sy-url').value.trim(); D.sync.key = document.getElementById('sy-key').value.trim(); save(); await sync(true); render(); break;
       case 'bk-copy': copyText(JSON.stringify({ app: 'cookie-and-milk', v: 2, data: Object.assign({}, D, { chat: D.chat.slice(-200), ai: undefined }) })); break;
       case 'bk-share': doBackup(true); popSheet(); break;
-      case 'ai-getkey': window.open('https://aistudio.google.com/apikey', '_blank'); break;
-      case 'ai-relayhelp': window.open('https://github.com/sanjith-lab/Cookie-and-milk-app/blob/main/apps-script/CookieBrainRelay.gs', '_blank'); break;
-      case 'ai-save': { const k = (document.getElementById('ai-key').value || '').replace(/\s+/g, '').replace(/^["']|["']$/g, ''); const gq = ((document.getElementById('ai-groq') || {}).value || '').replace(/\s+/g, '').replace(/^["']|["']$/g, '');
-        if (k.length < 20 && gq.length < 20) { ui.aiMsg = 'Paste a Gemini key or a Groq key.'; ui.aiOk = false; render(); break; }
+      case 'ai-save': { const k = (document.getElementById('ai-key').value || '').replace(/\s+/g, '').replace(/^["']|["']$/g, '');
+        if (!/^sk-ant-[A-Za-z0-9_\-]{20,}$/.test(k)) { ui.aiMsg = 'A Claude key starts with sk-ant-. Copy it again from console.anthropic.com.'; ui.aiOk = false; render(); break; }
         const rl = ((document.getElementById('ai-relay') || {}).value || '').trim();
         if (rl && !/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(rl)) { ui.aiMsg = 'The relay URL should start with https://script.google.com/macros/s/'; ui.aiOk = false; render(); break; }
-        D.ai = Object.assign({}, D.ai, { key: k.length >= 20 ? k : '', groqKey: gq.length >= 20 ? gq : '', relay: rl, on: true, model: '' }); ui.aiMsg = 'Testing…'; ui.aiOk = true; render();
-        Brain.check(D).then((r) => { ui.aiOk = r.ok; ui.aiMsg = (r.ok ? 'Smart mode is ready. ' : '') + r.lines.join('  '); save(); render(); }); break; }
-      case 'ai-getgroq': window.open('https://console.groq.com/keys', '_blank'); break;
+        D.ai = { on: true, key: k, relay: rl, model: '', used: (D.ai && D.ai.used) || 0 }; ui.aiMsg = 'Testing…'; ui.aiOk = true; render();
+        Brain.check(D).then((r) => { ui.aiOk = r.ok; ui.aiMsg = r.lines.join('  '); save(); render(); }); break; }
+      case 'ai-getkey': window.open('https://console.anthropic.com/settings/keys', '_blank'); break;
       case 'ai-onoff': D.ai.on = !D.ai.on; afterChange(); break;
-      case 'ai-forget': D.ai = { on: true, key: '', groqKey: '', relay: D.ai.relay || '', model: '' }; ui.aiMsg = ''; afterChange(); break;
+      case 'ai-forget': D.ai = { on: true, key: '', relay: D.ai.relay || '', model: '' }; ui.aiMsg = ''; afterChange(); break;
       case 'unpin': { const lay = E.layout(D); E.snapshot(D, 'unpin'); lay.pins = lay.pins.filter((x) => x.id !== t.dataset.id); lay.order = lay.order.filter((x) => x !== t.dataset.id); afterChange(); toast('Card removed. Say undo to bring it back.'); break; }
       case 'bk-restore': { try { const d = JSON.parse(document.getElementById('bk-text').value); if (!d || d.app !== 'cookie-and-milk' || !d.data) throw new Error(); D = Object.assign(E.blank(), d.data); popSheet(); toast('Restored'); afterChange(); } catch (err) { toast('That doesn\'t look like a Cookie & Milk backup'); } break; }
     }

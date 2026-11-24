@@ -11,5 +11,5 @@ E.handle(D,'tea 20, samosa 30, auto 60'); a.strictEqual(E.live(D).filter(r=>r.ki
 E.handle(D,'move recent to the top'); a.strictEqual(E.layout(D).order[0],'recent');
 E.handle(D,'undo'); a.notStrictEqual(E.layout(D).order[0],'recent');
 a.ok(!I.mask('lunch with aravind key AIzaSyABCDEFGHIJKLMNOPQRSTUV', D).match(/aravind|AIza/i));
-D.ai={on:true,key:'x'.repeat(30)}; const r=E.handle(D,'that thing for aravind bike, make it half'); a.strictEqual(r && r.effect && r.effect.type,'ai');
+D.ai={on:true,key:'sk-ant-'+'x'.repeat(30)}; const r=E.handle(D,'that thing for aravind bike, make it half'); a.strictEqual(r && r.effect && r.effect.type,'ai');
 console.log('smart brain tests passed');
