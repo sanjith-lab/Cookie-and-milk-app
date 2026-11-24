@@ -58,6 +58,24 @@ jobs:
         run: |
           mkdir -p ~/.android
           cp signing/debug.keystore ~/.android/debug.keystore
+          # Pin the key inside Gradle too, so every build is signed with the same key
+          cat >> android/app/build.gradle <<'GRADLE'
+
+          android {
+              signingConfigs {
+                  cookie {
+                      storeFile rootProject.file("../signing/debug.keystore")
+                      storePassword "android"
+                      keyAlias "androiddebugkey"
+                      keyPassword "android"
+                  }
+              }
+              buildTypes {
+                  debug { signingConfig signingConfigs.cookie }
+                  release { signingConfig signingConfigs.cookie }
+              }
+          }
+          GRADLE
 
       - name: Build APK
         working-directory: android
@@ -70,7 +88,11 @@ jobs:
           }
 
       - name: Rename APK
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk Cookie-and-Milk-1.0.${{ github.run_number }}.apk
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk Cookie-and-Milk-1.0.${{ github.run_number }}.apk
+          # Refuse to publish if the signature isn't the app's permanent key (updates would fail)
+          keytool -printcert -jarfile Cookie-and-Milk-1.0.${{ github.run_number }}.apk | tee cert.txt
+          grep -q "EB:F9:82:81:EA:EA:E1:C0:81:59:C0:97:64:B2:10:C1:0A:10:7C:99:85:EB:1B:0E:3D:C1:4E:4C:39:34:C6:6A" cert.txt || { echo "::error::APK is not signed with the app's permanent key"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
