@@ -621,9 +621,10 @@
         '<span class="lbl2">1. Get a free key at aistudio.google.com/apikey (sign in, "Create API key", copy it)</span><button class="btn" style="align-self:flex-start" data-act="ai-getkey">Open Google AI Studio</button>' +
         '<span class="lbl2">2. Paste your key here</span><input id="ai-key" class="inp" placeholder="AIza..." value="' + esc(a.key || '') + '" autocomplete="off">' +
         (ui.aiMsg ? '<div class="s12 ' + (ui.aiOk ? 'green' : 'red') + '">' + esc(ui.aiMsg) + '</div>' : '') +
+        '<span class="lbl2">Backup brain (recommended): free Groq key from console.groq.com/keys. When Gemini is busy, Groq answers instead.</span><button class="btn" style="align-self:flex-start" data-act="ai-getgroq">Open Groq console</button><input id="ai-groq" class="inp" placeholder="gsk_..." value="' + esc(a.groqKey || '') + '" autocomplete="off">' +
         '<span class="lbl2">3. Only if you see "Unable to resolve host": your network blocks Google\'s AI server. Set up the free relay script (5 min, steps on the link below) and paste its URL here</span><input id="ai-relay" class="inp" placeholder="https://script.google.com/macros/s/.../exec" value="' + esc(a.relay || '') + '" autocomplete="off"><button class="btn" style="align-self:flex-start" data-act="ai-relayhelp">Relay setup steps</button>' +
         '<button class="primary" data-act="ai-save">Save and test</button>' +
-        (a.key ? '<button class="set-row" data-act="ai-onoff"><span class="grow"><span class="b s14">Smart mode</span><br><span class="s12 muted">' + (a.model ? 'Using ' + esc(a.model) + (a.used ? ' · ' + a.used + ' questions so far' : '') : 'Model is picked automatically') + '</span></span><span class="toggle ' + (a.on ? 'on' : '') + '"><i></i></span></button><button class="danger" data-act="ai-forget">Remove key</button>' : '');
+        ((a.key || a.groqKey) ? '<button class="set-row" data-act="ai-onoff"><span class="grow"><span class="b s14">Smart mode</span><br><span class="s12 muted">' + (a.lastBrain ? 'Last answer from ' + esc(a.lastBrain) : a.model ? 'Using ' + esc(a.model) : 'Model is picked automatically') + (a.used ? ' · ' + a.used + ' questions so far' : '') + '</span></span><span class="toggle ' + (a.on ? 'on' : '') + '"><i></i></span></button><button class="danger" data-act="ai-forget">Remove key</button>' : '');
     }
     if (t === 'backup') return head('Backup &amp; restore') + '<div class="s13 muted">' + (D.lastBackup ? 'Last backup: ' + timeAgo(D.lastBackup) + '. ' : '') + 'I save a backup file in Documents/CookieAndMilk every week by myself. Your Gemini key is never included.</div><button class="primary" data-act="bk-share">Back up now (save or share file)</button><button class="btn" style="align-self:flex-start" data-act="bk-copy">Copy backup as text</button><span class="lbl2">Restore from a backup file</span><input id="bk-file" type="file" accept=".json,application/json,text/plain" class="inp"><textarea id="bk-text" class="inp" rows="4" placeholder="Paste a backup here to restore"></textarea><button class="btn black" style="align-self:flex-start" data-act="bk-restore">Restore</button>';
     return head('');
@@ -906,13 +907,15 @@
       case 'bk-share': doBackup(true); popSheet(); break;
       case 'ai-getkey': window.open('https://aistudio.google.com/apikey', '_blank'); break;
       case 'ai-relayhelp': window.open('https://github.com/sanjith-lab/Cookie-and-milk-app/blob/main/apps-script/CookieBrainRelay.gs', '_blank'); break;
-      case 'ai-save': { const k = (document.getElementById('ai-key').value || '').replace(/\s+/g, '').replace(/^["']|["']$/g, ''); if (k.length < 20) { ui.aiMsg = 'That key looks too short.'; ui.aiOk = false; render(); break; }
+      case 'ai-save': { const k = (document.getElementById('ai-key').value || '').replace(/\s+/g, '').replace(/^["']|["']$/g, ''); const gq = ((document.getElementById('ai-groq') || {}).value || '').replace(/\s+/g, '').replace(/^["']|["']$/g, '');
+        if (k.length < 20 && gq.length < 20) { ui.aiMsg = 'Paste a Gemini key or a Groq key.'; ui.aiOk = false; render(); break; }
         const rl = ((document.getElementById('ai-relay') || {}).value || '').trim();
         if (rl && !/^https:\/\/script\.google(usercontent)?\.com\/.+/.test(rl)) { ui.aiMsg = 'The relay URL should start with https://script.google.com/macros/s/'; ui.aiOk = false; render(); break; }
-        D.ai = Object.assign({}, D.ai, { key: k, relay: rl, on: true, model: '' }); ui.aiMsg = 'Testing…'; ui.aiOk = true; render();
-        Brain.check(D).then((r) => { ui.aiOk = r.ok; ui.aiMsg = r.ok ? '✓ Working! Using ' + r.model + '.' : Brain.errorText({ message: r.error, detail: r.detail }); save(); render(); }); break; }
+        D.ai = Object.assign({}, D.ai, { key: k.length >= 20 ? k : '', groqKey: gq.length >= 20 ? gq : '', relay: rl, on: true, model: '' }); ui.aiMsg = 'Testing…'; ui.aiOk = true; render();
+        Brain.check(D).then((r) => { ui.aiOk = r.ok; ui.aiMsg = (r.ok ? 'Smart mode is ready. ' : '') + r.lines.join('  '); save(); render(); }); break; }
+      case 'ai-getgroq': window.open('https://console.groq.com/keys', '_blank'); break;
       case 'ai-onoff': D.ai.on = !D.ai.on; afterChange(); break;
-      case 'ai-forget': D.ai = { on: true, key: '', model: '' }; ui.aiMsg = ''; afterChange(); break;
+      case 'ai-forget': D.ai = { on: true, key: '', groqKey: '', relay: D.ai.relay || '', model: '' }; ui.aiMsg = ''; afterChange(); break;
       case 'unpin': { const lay = E.layout(D); E.snapshot(D, 'unpin'); lay.pins = lay.pins.filter((x) => x.id !== t.dataset.id); lay.order = lay.order.filter((x) => x !== t.dataset.id); afterChange(); toast('Card removed. Say undo to bring it back.'); break; }
       case 'bk-restore': { try { const d = JSON.parse(document.getElementById('bk-text').value); if (!d || d.app !== 'cookie-and-milk' || !d.data) throw new Error(); D = Object.assign(E.blank(), d.data); popSheet(); toast('Restored'); afterChange(); } catch (err) { toast('That doesn\'t look like a Cookie & Milk backup'); } break; }
     }

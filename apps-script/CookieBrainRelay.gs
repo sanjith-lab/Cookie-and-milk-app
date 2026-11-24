@@ -16,6 +16,13 @@
 function doPost(e) {
   var b;
   try { b = JSON.parse(e.postData.contents); } catch (err) { return out_({ status: 400, body: '{"error":{"message":"bad request"}}' }); }
+  if (b && b.provider === 'groq') {
+    if (!b.apiKey || !/^(chat\/completions|models)$/.test(b.path || '')) return out_({ status: 400, body: '{"error":{"message":"bad request"}}' });
+    var g = { method: b.body ? 'post' : 'get', muteHttpExceptions: true, headers: { Authorization: 'Bearer ' + b.apiKey } };
+    if (b.body) { g.contentType = 'application/json'; g.payload = JSON.stringify(b.body); }
+    var gr = UrlFetchApp.fetch('https://api.groq.com/openai/v1/' + b.path, g);
+    return out_({ status: gr.getResponseCode(), body: gr.getContentText() });
+  }
   if (!b || !b.apiKey || !b.path || !/^models(\/|\?|$)/.test(b.path)) return out_({ status: 400, body: '{"error":{"message":"bad request"}}' });
   var opt = { method: b.body ? 'post' : 'get', muteHttpExceptions: true, headers: { 'x-goog-api-key': b.apiKey } };
   if (b.body) { opt.contentType = 'application/json'; opt.payload = JSON.stringify(b.body); }

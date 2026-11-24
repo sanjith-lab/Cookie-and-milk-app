@@ -175,7 +175,7 @@
     D._noAI = true;
     try { const multi = multiItems(D, text); if (multi) return multi; return exec(D, L.parse(text, ctx(D)), text); } finally { D._noAI = false; }
   }
-  function aiReady(D) { return !!(D.ai && D.ai.on && D.ai.key); }
+  function aiReady(D) { return !!(D.ai && D.ai.on && (D.ai.key || D.ai.groqKey)); }
   // Send to the AI brain only what the rules can't handle well
   function wantsAI(D, it, text) {
     if (!aiReady(D) || D._noAI) return false;
@@ -243,7 +243,7 @@
       case 'layout': return layoutOp(D, it);
       case 'ai-key': D.ai = Object.assign({ on: true }, D.ai, { key: it.key, on: true, model: '' }); return say(D, '🔑 Saved your Gemini key. Smart mode is on! Try asking me anything, like <b>am I spending more on weekends?</b>');
       case 'ai-toggle': D.ai = Object.assign({}, D.ai, { on: it.on }); return say(D, it.on ? (D.ai.key ? '🧠 Smart mode is on.' : '🧠 Smart mode needs a free Gemini key. Tap below to set it up.') : '🧠 Smart mode is off. I\'ll use my built-in rules only.', !D.ai.key && it.on ? { type: 'ask', options: [opt('Set up smart mode', { do: 'sheet', sheet: 'ai' }, 'black')] } : undefined);
-      case 'ai': if (!aiReady(D)) return say(D, '🧠 Smart mode needs a free Gemini key first.', { type: 'ask', options: [opt('Set up smart mode', { do: 'sheet', sheet: 'ai' }, 'black')] }); return { effect: { type: 'ai', text: it.text } };
+      case 'ai': if (!aiReady(D)) return say(D, '🧠 Smart mode needs a free Gemini or Groq key first.', { type: 'ask', options: [opt('Set up smart mode', { do: 'sheet', sheet: 'ai' }, 'black')] }); return { effect: { type: 'ai', text: it.text } };
       case 'chat-keep': return chatKeep(D, it.days);
       case 'chat-clear': D.chatClearedAt = clock().getTime(); return say(D, '🧹 Fresh chat! Everything you logged is still saved.');
       case 'delete': return deleteEntries(D, it);
@@ -840,7 +840,7 @@
       { label: 'Reminders', value: D.reminders.on ? 'on · ' + hourText(Math.floor(D.reminders.morning), 0) + ' & ' + hourText(Math.floor(D.reminders.night), 0) : 'off' },
       { label: 'Payment detection', value: D.sms.enabled ? 'on' : 'off' },
       { label: 'Chat history', value: D.chatKeep < 0 ? 'forever' : D.chatKeep === 0 ? 'today only' : (D.chatKeep == null ? 7 : D.chatKeep) + ' days' },
-      { label: 'Smart mode (Gemini)', value: D.ai && D.ai.key ? (D.ai.on ? 'on' : 'off') : 'not set up' },
+      { label: 'Smart mode', value: D.ai && (D.ai.key || D.ai.groqKey) ? (D.ai.on ? 'on · ' + [D.ai.key ? 'Gemini' : '', D.ai.groqKey ? 'Groq' : ''].filter(Boolean).join(' + ') : 'off') : 'not set up' },
       { label: 'Theme', value: D.theme === 'dark' ? 'dark' : 'light' },
       { label: 'Last backup', value: D.lastBackup ? new Date(D.lastBackup).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'never' },
     ];

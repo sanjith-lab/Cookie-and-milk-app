@@ -39,9 +39,9 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
   }
   let RELAY = '';
   // Through the user's own Apps Script on script.google.com (for networks that block Google's AI host)
-  async function viaRelay(url, body, key) {
-    const path = url.replace(API + '/', '');
-    const res = await fetch(RELAY, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ path, body: body || null, apiKey: key }) });
+  async function viaRelay(url, body, key, provider) {
+    const path = provider === 'groq' ? url.replace(GROQ + '/', '') : url.replace(API + '/', '');
+    const res = await fetch(RELAY, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ provider: provider || 'gemini', path, body: body || null, apiKey: key }) });
     const txt = await res.text(); let j = null; try { j = JSON.parse(txt); } catch (e) {}
     if (!j || typeof j.status !== 'number') { const e = new Error('relay'); e.detail = res.ok ? 'The relay URL didn\'t answer like Cookie\'s relay script. Check you deployed it as a Web app with access: Anyone.' : 'Relay HTTP ' + res.status; throw e; }
     let json = null; try { json = JSON.parse(j.body); } catch (e) {}
@@ -66,6 +66,46 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
       return { ok: res.ok, status: res.status, json, txt };
     } finally { clearTimeout(t); }
   }
+  // ---------------- Groq (backup brain, free, fast) ----------------
+  const GROQ = 'https://api.groq.com/openai/v1';
+  const GROQ_MODELS = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b', 'llama-3.1-8b-instant'];
+  async function groqDirect(url, body, key) {
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const t = setTimeout(() => ctrl && ctrl.abort(), 30000);
+    try {
+      const res = await fetch(url, Object.assign({ method: body ? 'POST' : 'GET', headers: Object.assign({ Authorization: 'Bearer ' + key }, body ? { 'Content-Type': 'application/json' } : {}) }, body ? { body: JSON.stringify(body) } : {}, ctrl ? { signal: ctrl.signal } : {}));
+      const txt = await res.text(); let json = null; try { json = JSON.parse(txt); } catch (e) {}
+      return { ok: res.ok, status: res.status, json, txt };
+    } finally { clearTimeout(t); }
+  }
+  async function groqHttp(path, body, key) {
+    const url = GROQ + '/' + path;
+    // Direct first; if this network can't reach Groq, go through the relay
+    if (!RELAY || GROQ_DIRECT_OK !== false) {
+      try { const r = await groqDirect(url, body, key); GROQ_DIRECT_OK = true; return r; }
+      catch (e) { if (!RELAY) throw e; GROQ_DIRECT_OK = false; }
+    }
+    return viaRelay(url, body, key, 'groq');
+  }
+  let GROQ_DIRECT_OK = null;
+  async function groqGenerate(D, text) {
+    const key = D.ai.groqKey; if (!key) throw new Error('nokey');
+    const pool = [D.ai.groqModel].concat(GROQ_MODELS).filter((m, i, a) => m && a.indexOf(m) === i);
+    const errs = {};
+    for (const model of pool) {
+      const body = { model, temperature: 0.2, max_tokens: 1500, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: text }] };
+      let r = await groqHttp('chat/completions', body, key);
+      if (r.status === 400 && /response_format|json/i.test(r.txt)) { delete body.response_format; r = await groqHttp('chat/completions', body, key); }
+      if (r.ok) { const c = r.json && r.json.choices && r.json.choices[0]; D.ai.groqModel = model; D.ai.used = (D.ai.used || 0) + 1; D.ai.lastBrain = 'Groq · ' + model; return (c && c.message && c.message.content) || ''; }
+      const msg = (r.json && r.json.error && r.json.error.message) || ('HTTP ' + r.status);
+      if (r.status === 401 || r.status === 403) throw Object.assign(new Error('badgroq'), { detail: msg });
+      if (r.status === 429) errs.limit = errs.limit || msg; else if (r.status >= 500) errs.busy = errs.busy || msg; else errs.model = errs.model || msg;
+    }
+    if (errs.busy) throw Object.assign(new Error('busy'), { detail: 'Groq: ' + errs.busy });
+    if (errs.limit) throw Object.assign(new Error('limit'), { detail: 'Groq: ' + errs.limit });
+    throw Object.assign(new Error('model'), { detail: 'Groq: ' + (errs.model || 'no model') });
+  }
+
   // Pick the best free "flash" model available to this key
   async function pickModel(key) {
     try {
@@ -83,7 +123,20 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     } catch (e) { if (RELAY || /resolve host|hostname|Unable to/i.test(String(e && e.message))) throw e; /* otherwise fall back */ }
     return { model: FALLBACK_MODELS[0], all: [] };
   }
+  // Gemini first; if it's busy, out of quota or unreachable, the Groq backup brain answers
   async function generate(D, parts, json) {
+    RELAY = (D.ai.relay || '').trim();
+    const hasG = !!(D.ai && D.ai.key), hasQ = !!(D.ai && D.ai.groqKey);
+    if (!hasG && !hasQ) throw new Error('nokey');
+    if ((D.ai.prefer === 'groq' || !hasG) && hasQ) {
+      try { return await groqGenerate(D, parts[0].text); } catch (e) { if (!hasG || e.message === 'badgroq') throw e; return await geminiGenerate(D, parts, json); }
+    }
+    // After Gemini was busy, go straight to Groq for 30 minutes so answers stay fast
+    if (hasQ && D.ai.groqUntil && Date.now() < D.ai.groqUntil) { try { return await groqGenerate(D, parts[0].text); } catch (e) { if (e.message === 'badgroq') throw e; } }
+    try { const t = await geminiGenerate(D, parts, json); D.ai.lastBrain = 'Gemini · ' + D.ai.model; D.ai.groqUntil = 0; return t; }
+    catch (e) { if (!hasQ || e.message === 'nokey') throw e; if (/busy|limit|model/.test(e.message)) D.ai.groqUntil = Date.now() + 30 * 60000; return await groqGenerate(D, parts[0].text); }
+  }
+  async function geminiGenerate(D, parts, json) {
     const key = D.ai && D.ai.key; if (!key) throw new Error('nokey');
     RELAY = (D.ai.relay || '').trim();
     if (!D.ai.model) { const p = await pickModel(key); if (p.error === 'key') { const e = new Error('badkey'); e.detail = p.detail; throw e; } D.ai.model = p.model; D.ai.models = p.all || []; }
@@ -130,23 +183,34 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     j.confirm = !!j.confirm || j.commands.length > 2 || j.commands.some((c) => /^(delete|remove|reset|clear)/i.test(c));
     return j;
   }
-  // Test the key and pick a model
+  // Test each brain that has a key
   async function check(D) {
     RELAY = (D.ai.relay || '').trim();
-    let p;
-    try { p = await pickModel(D.ai.key); } catch (e) { return { ok: false, error: e.message, detail: e.detail }; }
-    if (p.error) return { ok: false, error: 'badkey', detail: p.detail };
-    D.ai.model = p.model; D.ai.models = p.all || [];
-    try { await generate(D, [{ text: 'Reply with {"commands":[],"reply":"ok","confirm":false}' }], true); return { ok: true, model: D.ai.model }; }
-    catch (e) { return { ok: false, error: e.message, detail: e.detail }; }
+    const out = { ok: false, lines: [] };
+    const ping = [{ text: 'Reply with {"commands":[],"reply":"ok","confirm":false}' }];
+    if (D.ai.key) {
+      try {
+        const p = await pickModel(D.ai.key);
+        if (p.error) throw Object.assign(new Error('badkey'), { detail: p.detail });
+        D.ai.model = p.model; D.ai.models = p.all || [];
+        await geminiGenerate(D, ping, true); out.ok = true; out.lines.push('✓ Gemini works (' + D.ai.model + ')');
+      } catch (e) { out.lines.push('✗ Gemini: ' + errorText(e)); }
+    }
+    if (D.ai.groqKey) {
+      try { await groqGenerate(D, ping[0].text); out.ok = true; out.lines.push('✓ Groq works (' + D.ai.groqModel + ')'); }
+      catch (e) { out.lines.push('✗ Groq: ' + errorText(e)); }
+    }
+    if (!D.ai.key && !D.ai.groqKey) out.lines.push('Add a Gemini or Groq key first.');
+    return out;
   }
   function errorText(e) {
     const m = (e && e.message) || '';
-    if (m === 'nokey') return 'Smart mode needs a free Gemini key.';
-    if (m === 'busy') return 'Google\'s AI is busy right now (it happens on the free tier). Try again in a minute 🍪';
+    if (m === 'nokey') return 'Smart mode needs a free Gemini or Groq key.';
+    if (m === 'badgroq') return 'Groq didn\'t accept the key' + (e.detail ? ' (' + e.detail + ')' : '') + '. Copy it again from console.groq.com/keys.';
+    if (m === 'busy') return 'The AI is busy right now (free tiers get crowded)' + (e.detail && /Groq/.test(e.detail) ? '' : '. Adding a free Groq key as backup fixes this') + '. Try again in a minute 🍪';
     if (m === 'relay') return 'The relay didn\'t work' + (e.detail ? ': ' + e.detail : '.');
     if (m === 'badkey') return 'Google didn\'t accept the key' + (e.detail ? ' (' + e.detail + ')' : '') + '. Copy it again from AI Studio, with no spaces.';
-    if (m === 'limit') return 'The free Gemini limit is used up for now. I\'ll be smart again later 🍪';
+    if (m === 'limit') return 'The free AI limit is used up for now' + (e.detail ? ' (' + e.detail.slice(0, 80) + ')' : '') + '. I\'ll be smart again later 🍪';
     if (/abort|Failed to fetch|Network|network|resolve host|hostname|Unable to|timed? ?out|connection/i.test(m)) return RELAY ? 'I couldn\'t reach your relay script. Check your internet and the relay URL.' : 'Your network can\'t reach Google\'s AI server. Add a relay in Settings › Smart mode (step 3) and it will work.';
     return 'My smart brain had a hiccup (' + m + (e.detail ? ', ' + e.detail : '') + '). Try again in a bit.';
   }
