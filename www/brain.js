@@ -74,17 +74,21 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
         .filter((n) => /flash/.test(n) && !/(image|tts|live|audio|vision|thinking|exp|embedding|transcribe|omni|lite)/.test(n));
       const score = (n) => { const v = n.match(/(\d+(?:\.\d+)?)/); return (v ? Number(v[1]) : 0) * 10 - (/preview/.test(n) ? 5 : 0) + (/latest/.test(n) ? 3 : 0); };
       list.sort((a, b) => score(b) - score(a));
-      if (list.length) return { model: list[0], all: list };
+      if (list.length) { const lite = (r.json.models || []).map((m) => m.name.replace(/^models\//, '')).filter((n) => /flash-lite/.test(n) && !/(image|tts|live|audio|preview|exp)/.test(n)); return { model: list[0], all: list.concat(lite) }; }
     } catch (e) { if (RELAY || /resolve host|hostname|Unable to/i.test(String(e && e.message))) throw e; /* otherwise fall back */ }
     return { model: FALLBACK_MODELS[0] };
   }
   async function generate(D, parts, json) {
     const key = D.ai && D.ai.key; if (!key) throw new Error('nokey');
     RELAY = (D.ai.relay || '').trim();
-    if (!D.ai.model) { const p = await pickModel(key); if (p.error === 'key') throw new Error('badkey'); D.ai.model = p.model; }
+    if (!D.ai.model) { const p = await pickModel(key); if (p.error === 'key') { const e = new Error('badkey'); e.detail = p.detail; throw e; } D.ai.model = p.model; D.ai.models = p.all || []; }
     const tried = [];
     let model = D.ai.model;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Other models to try when one is busy (503) or missing
+    const pool = [].concat(D.ai.models || [], FALLBACK_MODELS).filter((m, i, a) => a.indexOf(m) === i);
+    const nextModel = () => pool.find((m) => !tried.includes(m));
+    let lastErr = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
       tried.push(model);
       const body = { systemInstruction: { parts: [{ text: SYSTEM }] }, contents: [{ role: 'user', parts }], generationConfig: Object.assign({ temperature: 0.2, maxOutputTokens: 4096 }, json ? { responseMimeType: 'application/json' } : {}) };
       const r = await http(API + '/models/' + model + ':generateContent', body, key);
@@ -96,10 +100,11 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
       }
       if (r.status === 429) throw new Error('limit');
       if (r.status === 401 || r.status === 403 || (r.status === 400 && /API key|API_KEY|credential/i.test(r.txt))) { const e = new Error('badkey'); e.detail = googleMsg(r); throw e; }
-      if (r.status === 404 || r.status === 400) { model = FALLBACK_MODELS.find((m) => !tried.includes(m)); if (!model) break; continue; }
+      if (r.status === 404 || r.status === 400) { lastErr = Object.assign(new Error('model'), { detail: googleMsg(r) }); model = nextModel(); if (!model) break; continue; }
+      if (r.status >= 500) { lastErr = Object.assign(new Error('busy'), { detail: googleMsg(r) }); await new Promise((res) => setTimeout(res, 800 + attempt * 700)); if (attempt % 2 === 1 || attempt >= 2) { const n = nextModel(); if (n) model = n; } continue; }
       { const e = new Error('http' + r.status); e.detail = googleMsg(r); throw e; }
     }
-    throw new Error('model');
+    throw lastErr || new Error('model');
   }
   function googleMsg(r) { const e = r && r.json && r.json.error; return e ? (e.status ? e.status + ': ' : '') + String(e.message || '').slice(0, 160) : 'HTTP ' + (r && r.status); }
   function history(D, I, n) {
@@ -122,13 +127,14 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     let p;
     try { p = await pickModel(D.ai.key); } catch (e) { return { ok: false, error: e.message, detail: e.detail }; }
     if (p.error) return { ok: false, error: 'badkey', detail: p.detail };
-    D.ai.model = p.model;
+    D.ai.model = p.model; D.ai.models = p.all || [];
     try { await generate(D, [{ text: 'Reply with {"commands":[],"reply":"ok","confirm":false}' }], true); return { ok: true, model: D.ai.model }; }
     catch (e) { return { ok: false, error: e.message, detail: e.detail }; }
   }
   function errorText(e) {
     const m = (e && e.message) || '';
     if (m === 'nokey') return 'Smart mode needs a free Gemini key.';
+    if (m === 'busy') return 'Google\'s AI is busy right now (it happens on the free tier). Try again in a minute 🍪';
     if (m === 'relay') return 'The relay didn\'t work' + (e.detail ? ': ' + e.detail : '.');
     if (m === 'badkey') return 'Google didn\'t accept the key' + (e.detail ? ' (' + e.detail + ')' : '') + '. Copy it again from AI Studio, with no spaces.';
     if (m === 'limit') return 'The free Gemini limit is used up for now. I\'ll be smart again later 🍪';
