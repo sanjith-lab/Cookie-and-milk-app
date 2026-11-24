@@ -341,9 +341,9 @@
   function parseSmartCommands(t, ctx) {
     let m;
     // AI on demand
-    m = t.match(/^(?:ask ai|ask claude|claude|ai|hey cookie)[:,]?\s+(.+)$/); if (m) return { type: 'ai', text: m[1] };
-    if (/^(turn on|enable|switch on|start using)\s+(ai|claude|smart mode)$/.test(t)) return { type: 'ai-toggle', on: true };
-    if (/^(turn off|disable|switch off|stop using)\s+(ai|claude|smart mode)$/.test(t)) return { type: 'ai-toggle', on: false };
+    m = t.match(/^(?:ask ai|ask openai|openai|chatgpt|ai|hey cookie)[:,]?\s+(.+)$/); if (m) return { type: 'ai', text: m[1] };
+    if (/^(turn on|enable|switch on|start using)\s+(ai|openai|chatgpt|smart mode)$/.test(t)) return { type: 'ai-toggle', on: true };
+    if (/^(turn off|disable|switch off|stop using)\s+(ai|openai|chatgpt|smart mode)$/.test(t)) return { type: 'ai-toggle', on: false };
     // Explain
     if (/^(why|how come|explain|how is|how's|how did you)\b/.test(t) && /safe|₹?0\b|zero|so low|so high/.test(t)) return { type: 'explain-safe' };
     // Backup
@@ -355,8 +355,8 @@
     if (/^(?:turn on |enable |switch to |use |go )?light(?: mode| theme)?$|^(turn off|disable) dark( mode| theme)?$/.test(t)) return { type: 'theme', dark: false };
     // Settings summary and sheets
     if (/^(?:show|what are|list|see)?\s*(?:me\s+)?my (?:current\s+|all\s+)?settings\??$|^what are my settings/.test(t)) return { type: 'settings-card' };
-    m = t.match(/^(?:open|show|go to|change|edit|manage)\s+(?:my\s+)?(income|salary|budgets?|bills?|categor(?:y|ies)|people|friends|contacts|shortcuts?|groups|chat history|reminders?|notifications?|payments?|payment detection|sync|sheets? sync|backup|profile|ai|claude|smart mode|ai settings)(?:\s+settings|\s+page|\s+screen)?$/);
-    if (m) { const v = m[1]; const sheet = /income|salary/.test(v) ? 'income' : /budget/.test(v) ? 'budgets' : /bill/.test(v) ? 'bills' : /categor/.test(v) ? 'categories' : /people|friends|contacts/.test(v) ? 'people' : /shortcut|group/.test(v) ? 'shortcuts' : /chat/.test(v) ? 'chathist' : /remind|notif/.test(v) ? 'reminders' : /payment/.test(v) ? 'payments' : /sync|sheet/.test(v) ? 'sync' : /backup/.test(v) ? 'backup' : /ai|claude|smart/.test(v) ? 'ai' : 'profile'; return { type: 'open-sheet', sheet }; }
+    m = t.match(/^(?:open|show|go to|change|edit|manage)\s+(?:my\s+)?(income|salary|budgets?|bills?|categor(?:y|ies)|people|friends|contacts|shortcuts?|groups|chat history|reminders?|notifications?|payments?|payment detection|sync|sheets? sync|backup|profile|ai|openai|chatgpt|smart mode|ai settings)(?:\s+settings|\s+page|\s+screen)?$/);
+    if (m) { const v = m[1]; const sheet = /income|salary/.test(v) ? 'income' : /budget/.test(v) ? 'budgets' : /bill/.test(v) ? 'bills' : /categor/.test(v) ? 'categories' : /people|friends|contacts/.test(v) ? 'people' : /shortcut|group/.test(v) ? 'shortcuts' : /chat/.test(v) ? 'chathist' : /remind|notif/.test(v) ? 'reminders' : /payment/.test(v) ? 'payments' : /sync|sheet/.test(v) ? 'sync' : /backup/.test(v) ? 'backup' : /ai|openai|chatgpt|smart/.test(v) ? 'ai' : 'profile'; return { type: 'open-sheet', sheet }; }
     // You
     m = t.match(/^(?:my name is|call me|change my name to|set my name to|rename me to)\s+([a-z][a-z .'-]{0,30})$/); if (m) return { type: 'set-name', name: titleCase(m[1].trim()) };
     m = t.match(/\b(?:payday|pay day|salary day|salary date|salary comes|salary credited|i get paid|get salary)\b(?:\s+(?:is|on|to|every|by))*\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b/); if (m && Number(m[1]) >= 1 && Number(m[1]) <= 31) return { type: 'payday', day: Number(m[1]) };

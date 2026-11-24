@@ -150,7 +150,7 @@
     const { map } = maskMap(D); let t = String(text || '');
     Object.keys(map).sort((a, b) => b.length - a.length).forEach((n) => { t = t.replace(new RegExp('\\b' + escapeRe(n) + '\\b', 'gi'), map[n]); const first = n.split(' ')[0]; if (first.length > 2) t = t.replace(new RegExp('\\b' + escapeRe(first) + '\\b', 'gi'), map[n]); });
     if (D.me) t = t.replace(new RegExp('\\b' + escapeRe(D.me) + '\\b', 'gi'), 'Me');
-    t = t.replace(/(?:AIza|AQ\.|sk-ant-|gsk_)[0-9A-Za-z_.\-]{20,}/g, '[key]').replace(/[\w.\-]+@[a-z]{2,}/gi, '[upi]').replace(/\b\d{9,18}\b/g, '[number]').replace(/\b[A-Z]{4}0[A-Z0-9]{6}\b/g, '[ifsc]');
+    t = t.replace(/(?:AIza|AQ\.|sk-|gsk_)[0-9A-Za-z_.\-]{20,}/g, '[key]').replace(/[\w.\-]+@[a-z]{2,}/gi, '[upi]').replace(/\b\d{9,18}\b/g, '[number]').replace(/\b[A-Z]{4}0[A-Z0-9]{6}\b/g, '[ifsc]');
     return t;
   }
   function unmask(text, D) {

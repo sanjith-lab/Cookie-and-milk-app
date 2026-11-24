@@ -1,6 +1,6 @@
-/* Cookie & Milk: the smart brain (Claude Haiku via the Claude API).
+/* Cookie & Milk: the smart brain (OpenAI API, free data-sharing tokens on small models).
    Privacy: people's names are swapped for PersonA, PersonB..., UPI IDs and account numbers are removed,
-   and only totals plus the last few entries are sent. Claude never changes data itself: it answers with
+   and only totals plus the last few entries are sent. The AI never changes data itself: it answers with
    Cookie commands, which run through the normal rules with Undo. All maths stays on the phone. */
 (function (root) {
   'use strict';
@@ -35,22 +35,23 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     try { return JSON.parse(m[0]); } catch (e) { return null; }
   }
 
-  // ---------------- Claude API ----------------
-  const API = 'https://api.anthropic.com/v1';
-  const MODELS = ['claude-haiku-5-5'];
+  // ---------------- OpenAI API ----------------
+  const API = 'https://api.openai.com/v1';
+  // Small models covered by OpenAI's free daily tokens when data sharing is on
+  const MODELS = ['gpt-5.6-luna', 'gpt-5.4-nano-2026-03-17', 'gpt-5.6-terra', 'gpt-5.4-mini-2026-03-17', 'gpt-5-mini-2025-08-07'];
   let RELAY = '';
   async function direct(path, body, key) {
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const t = setTimeout(() => ctrl && ctrl.abort(), 40000);
+    const t = setTimeout(() => ctrl && ctrl.abort(), 45000);
     try {
-      const res = await fetch(API + '/' + path, Object.assign({ method: body ? 'POST' : 'GET', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'anthropic-dangerous-direct-browser-access': 'true' } }, body ? { body: JSON.stringify(body) } : {}, ctrl ? { signal: ctrl.signal } : {}));
+      const res = await fetch(API + '/' + path, Object.assign({ method: body ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' } }, body ? { body: JSON.stringify(body) } : {}, ctrl ? { signal: ctrl.signal } : {}));
       const txt = await res.text(); let json = null; try { json = JSON.parse(txt); } catch (e) {}
       return { ok: res.ok, status: res.status, json, txt };
     } finally { clearTimeout(t); }
   }
   // Through the user's own Apps Script on script.google.com (for networks that block the API)
   async function viaRelay(path, body, key) {
-    const res = await fetch(RELAY, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ provider: 'anthropic', path, body: body || null, apiKey: key }) });
+    const res = await fetch(RELAY, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ provider: 'openai', path, body: body || null, apiKey: key }) });
     const txt = await res.text(); let j = null; try { j = JSON.parse(txt); } catch (e) {}
     if (!j || typeof j.status !== 'number') throw Object.assign(new Error('relay'), { detail: res.ok ? 'The relay URL didn\'t answer like Cookie\'s relay script.' : 'Relay HTTP ' + res.status });
     let json = null; try { json = JSON.parse(j.body); } catch (e) {}
@@ -59,7 +60,6 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
   const netErr = (e) => /resolve host|hostname|Failed to fetch|network|timed? ?out|abort|connection|ECONN|EAI_|Unable to/i.test(String(e && e.message || e));
   let DIRECT_OK = null;
   async function http(path, body, key) {
-    // Direct first; if this network can't reach the API and a relay is set, go through the relay
     if (!RELAY || DIRECT_OK !== false) {
       for (let i = 0; i < 2; i++) {
         try { const r = await direct(path, body, key); DIRECT_OK = true; return r; }
@@ -68,22 +68,23 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     }
     return viaRelay(path, body, key);
   }
-  const apiMsg = (r) => { const e = r && r.json && r.json.error; return e ? (e.type ? e.type + ': ' : '') + String(e.message || '').slice(0, 160) : 'HTTP ' + (r && r.status); };
+  const apiMsg = (r) => { const e = r && r.json && r.json.error; return e ? (e.code ? e.code + ': ' : '') + String(e.message || '').slice(0, 160) : 'HTTP ' + (r && r.status); };
   async function generate(D, text) {
     const key = D.ai && D.ai.key; if (!key) throw new Error('nokey');
     RELAY = (D.ai.relay || '').trim();
     const models = [D.ai.model].concat(MODELS).filter((m, i, a) => m && a.indexOf(m) === i);
     let last = null;
     for (const model of models) {
+      let body = { model, max_completion_tokens: 2000, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: text }] };
       for (let attempt = 0; attempt < 3; attempt++) {
-        const body = { model, max_tokens: 1024, temperature: 0.2, system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: text }] };
-        const r = await http('messages', body, key);
-        if (r.ok) { D.ai.model = model; D.ai.used = (D.ai.used || 0) + 1; return (r.json && r.json.content || []).filter((c) => c.type === 'text').map((c) => c.text).join(''); }
+        const r = await http('chat/completions', body, key);
+        if (r.ok) { const c = r.json && r.json.choices && r.json.choices[0]; D.ai.model = model; D.ai.used = (D.ai.used || 0) + 1; return (c && c.message && c.message.content) || ''; }
         const msg = apiMsg(r);
-        if (r.status === 401 || r.status === 403) throw Object.assign(new Error('badkey'), { detail: msg });
-        if (/credit balance|billing|purchase credits/i.test(r.txt || '')) throw Object.assign(new Error('credit'), { detail: msg });
-        if (r.status === 404 || (r.status === 400 && /model/i.test(r.txt || ''))) { last = Object.assign(new Error('model'), { detail: msg }); break; }
-        if (r.status === 429 || r.status === 529 || r.status >= 500) { last = Object.assign(new Error(r.status === 429 ? 'limit' : 'busy'), { detail: msg }); await new Promise((res) => setTimeout(res, 1500 * (attempt + 1))); continue; }
+        if (r.status === 401 || r.status === 403 && /key|auth/i.test(r.txt || '')) throw Object.assign(new Error('badkey'), { detail: msg });
+        if (/insufficient_quota|credit_balance|billing/i.test(r.txt || '')) { last = Object.assign(new Error('quota'), { detail: msg }); break; }
+        if (r.status === 400 && /response_format|json/i.test(r.txt || '') && body.response_format) { body = Object.assign({}, body); delete body.response_format; continue; }
+        if (r.status === 404 || r.status === 403 || (r.status === 400 && /model/i.test(r.txt || ''))) { last = Object.assign(new Error('model'), { detail: msg }); break; }
+        if (r.status === 429 || r.status >= 500) { last = Object.assign(new Error(r.status === 429 ? 'limit' : 'busy'), { detail: msg }); await new Promise((res) => setTimeout(res, 1500 * (attempt + 1))); continue; }
         throw Object.assign(new Error('http' + r.status), { detail: msg });
       }
     }
@@ -110,13 +111,14 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
   }
   function errorText(e) {
     const m = (e && e.message) || '';
-    if (m === 'nokey') return 'Smart mode needs a Claude API key.';
-    if (m === 'badkey') return 'Claude didn\'t accept the key' + (e.detail ? ' (' + e.detail + ')' : '') + '. Copy it again from console.anthropic.com, it starts with sk-ant-.';
-    if (m === 'credit') return 'Your Claude account has no credit left. Add credit at console.anthropic.com › Billing.';
-    if (m === 'busy') return 'Claude is busy for a moment. Try again in a minute 🍪';
-    if (m === 'limit') return 'Too many requests at once. Try again in a minute 🍪';
+    if (m === 'nokey') return 'Smart mode needs an OpenAI API key.';
+    if (m === 'badkey') return 'OpenAI didn\'t accept the key' + (e.detail ? ' (' + e.detail + ')' : '') + '. Copy it again from platform.openai.com/api-keys, it starts with sk-.';
+    if (m === 'quota') return 'No free tokens or credit available. In OpenAI settings turn on "Share inputs and outputs" (free daily tokens), or add credit under Billing.';
+    if (m === 'busy') return 'OpenAI is busy for a moment. Try again in a minute 🍪';
+    if (m === 'limit') return 'Too many requests, or today\'s free tokens are used up. Try again later 🍪';
+    if (m === 'model') return 'Your OpenAI account can\'t use the small models yet' + (e.detail ? ' (' + e.detail + ')' : '') + '.';
     if (m === 'relay') return 'The relay didn\'t work' + (e.detail ? ': ' + e.detail : '.');
-    if (netErr(e)) return RELAY ? 'I couldn\'t reach your relay script. Check your internet.' : 'I couldn\'t reach Claude. Check your internet, or add the relay URL in Settings › Smart mode.';
+    if (netErr(e)) return RELAY ? 'I couldn\'t reach your relay script. Check your internet.' : 'I couldn\'t reach OpenAI. Check your internet, or add the relay URL in Settings › Smart mode.';
     return 'My smart brain had a hiccup (' + m + (e.detail ? ', ' + e.detail : '') + '). Try again in a bit.';
   }
   const api = { interpret, check, errorText, extractJSON, SYSTEM };
