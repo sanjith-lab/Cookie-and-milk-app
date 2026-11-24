@@ -5,7 +5,8 @@
 (function (root) {
   'use strict';
   const API = 'https://generativelanguage.googleapis.com/v1beta';
-  const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
+  // Only Google's rolling aliases as a last resort (fixed old versions get shut down)
+  const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-flash-lite-latest'];
 
   const COMMANDS = `
 LOG A SPEND: "tea 40" | "petrol 500 yesterday" | "tea 20, samosa 30, auto 60" (several at once)
@@ -70,13 +71,17 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     try {
       const r = await http(API + '/models?pageSize=200', null, key);
       if (r.status === 400 || r.status === 401 || r.status === 403) return { error: 'key', detail: googleMsg(r) };
-      const list = (r.json && r.json.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => m.name.replace(/^models\//, ''))
-        .filter((n) => /flash/.test(n) && !/(image|tts|live|audio|vision|thinking|exp|embedding|transcribe|omni|lite)/.test(n));
-      const score = (n) => { const v = n.match(/(\d+(?:\.\d+)?)/); return (v ? Number(v[1]) : 0) * 10 - (/preview/.test(n) ? 5 : 0) + (/latest/.test(n) ? 3 : 0); };
-      list.sort((a, b) => score(b) - score(a));
-      if (list.length) { const lite = (r.json.models || []).map((m) => m.name.replace(/^models\//, '')).filter((n) => /flash-lite/.test(n) && !/(image|tts|live|audio|preview|exp)/.test(n)); return { model: list[0], all: list.concat(lite) }; }
+      const names = (r.json && r.json.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => m.name.replace(/^models\//, ''))
+        .filter((n) => /flash/.test(n) && !/(image|tts|live|audio|vision|thinking|exp|embedding|transcribe|omni|computer)/.test(n));
+      const ver = (n) => { const v = n.match(/gemini-(\d+(?:\.\d+)?)/); return v ? Number(v[1]) : (/latest/.test(n) ? 99 : 0); };
+      const ok = names.filter((n) => ver(n) >= 3 || /latest/.test(n));
+      const score = (n) => ver(n) * 10 - (/preview/.test(n) ? 4 : 0);
+      const flash = ok.filter((n) => !/lite/.test(n) && !/latest/.test(n)).sort((a, b) => score(b) - score(a));
+      const lite = ok.filter((n) => /lite/.test(n) && !/latest/.test(n)).sort((a, b) => score(b) - score(a));
+      const all = flash.concat(lite);
+      if (all.length) return { model: all[0], all };
     } catch (e) { if (RELAY || /resolve host|hostname|Unable to/i.test(String(e && e.message))) throw e; /* otherwise fall back */ }
-    return { model: FALLBACK_MODELS[0] };
+    return { model: FALLBACK_MODELS[0], all: [] };
   }
   async function generate(D, parts, json) {
     const key = D.ai && D.ai.key; if (!key) throw new Error('nokey');
@@ -84,12 +89,13 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
     if (!D.ai.model) { const p = await pickModel(key); if (p.error === 'key') { const e = new Error('badkey'); e.detail = p.detail; throw e; } D.ai.model = p.model; D.ai.models = p.all || []; }
     const tried = [];
     let model = D.ai.model;
-    // Other models to try when one is busy (503) or missing
-    const pool = [].concat(D.ai.models || [], FALLBACK_MODELS).filter((m, i, a) => a.indexOf(m) === i);
+    // Every model we may try: the one that worked last, then newest Flash, then Flash-Lite, then Google's aliases
+    const pool = [model].concat(D.ai.models || [], FALLBACK_MODELS).filter((m, i, a) => m && a.indexOf(m) === i);
     const nextModel = () => pool.find((m) => !tried.includes(m));
-    let lastErr = null;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      tried.push(model);
+    const errs = { busy: null, limit: null, model: null };
+    let sameRetry = false;
+    for (let attempt = 0; attempt < 10 && model; attempt++) {
+      if (!tried.includes(model)) tried.push(model);
       const body = { systemInstruction: { parts: [{ text: SYSTEM }] }, contents: [{ role: 'user', parts }], generationConfig: Object.assign({ temperature: 0.2, maxOutputTokens: 4096 }, json ? { responseMimeType: 'application/json' } : {}) };
       const r = await http(API + '/models/' + model + ':generateContent', body, key);
       if (r.ok) {
@@ -98,13 +104,16 @@ COMMAND LANGUAGE (use these exact styles):${COMMANDS}`;
         D.ai.model = model; D.ai.used = (D.ai.used || 0) + 1;
         return text;
       }
-      if (r.status === 429) throw new Error('limit');
       if (r.status === 401 || r.status === 403 || (r.status === 400 && /API key|API_KEY|credential/i.test(r.txt))) { const e = new Error('badkey'); e.detail = googleMsg(r); throw e; }
-      if (r.status === 404 || r.status === 400) { lastErr = Object.assign(new Error('model'), { detail: googleMsg(r) }); model = nextModel(); if (!model) break; continue; }
-      if (r.status >= 500) { lastErr = Object.assign(new Error('busy'), { detail: googleMsg(r) }); await new Promise((res) => setTimeout(res, 800 + attempt * 700)); if (attempt % 2 === 1 || attempt >= 2) { const n = nextModel(); if (n) model = n; } continue; }
-      { const e = new Error('http' + r.status); e.detail = googleMsg(r); throw e; }
+      if (r.status >= 500 && !sameRetry) { errs.busy = errs.busy || googleMsg(r); sameRetry = true; await new Promise((res) => setTimeout(res, 1200)); continue; }
+      if (r.status >= 500) errs.busy = errs.busy || googleMsg(r);
+      else if (r.status === 429) errs.limit = errs.limit || googleMsg(r);
+      else errs.model = errs.model || googleMsg(r);
+      sameRetry = false; model = nextModel();
     }
-    throw lastErr || new Error('model');
+    if (errs.busy) throw Object.assign(new Error('busy'), { detail: errs.busy });
+    if (errs.limit) throw Object.assign(new Error('limit'), { detail: errs.limit });
+    throw Object.assign(new Error('model'), { detail: errs.model || 'no model available' });
   }
   function googleMsg(r) { const e = r && r.json && r.json.error; return e ? (e.status ? e.status + ': ' : '') + String(e.message || '').slice(0, 160) : 'HTTP ' + (r && r.status); }
   function history(D, I, n) {
